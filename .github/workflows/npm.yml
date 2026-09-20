@@ -1,0 +1,64 @@
+# Publish llmsh to npm.
+#
+# Runs after a release is published, so the binaries it packages already exist
+# and are the same files install.sh serves. It does not build anything: the
+# release is the single source of those bytes, and the checksums published with
+# it cover every route in.
+name: npm
+
+on:
+  release:
+    types: [published]
+  # For a re-run, or a first publish of a version released before this existed.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, without the v"
+        required: true
+      dry_run:
+        description: "Pack and validate without publishing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # npm provenance. This is what lets the registry show, verifiably, that the
+  # package was built by this workflow from this commit -- so someone deciding
+  # whether to run our binary can check that claim instead of taking it on
+  # faith. Asking people to trust a CLI that installs other people's code,
+  # while declining a free attestation about our own, would be a poor look.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 20 ships an npm new enough for --provenance.
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve version
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="${{ inputs.version }}"
+            V="${V#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "publishing $V"
+
+      - name: Publish
+        env:
+          # An npm automation token. Nothing else in this workflow reads it,
+          # and it is the only secret here.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          ARGS="--provenance"
+          [ "${{ inputs.dry_run }}" = "true" ] && ARGS="--dry-run"
+          ./npm/publish.sh "${{ steps.v.outputs.version }}" $ARGS
