@@ -135,7 +135,11 @@ func scaffold(name, desc string, cats []string, license string) string {
 		b.WriteString("  " + line + "\n")
 	}
 	b.WriteString("license: " + license + "\n")
-	b.WriteString("metadata:\n  skillhub:\n")
+	// From the constant, not typed out. The scaffold is where someone learns
+	// the shape of a manifest, so a stale key here teaches the wrong one to
+	// everybody who runs init -- and it is the copy least likely to be noticed,
+	// because it produces a file that still validates.
+	b.WriteString("metadata:\n  " + skill.HubKey + ":\n")
 	b.WriteString("    version: 0.1.0\n")
 	b.WriteString("    categories: [" + strings.Join(cats, ", ") + "]\n")
 	b.WriteString("    keywords: []\n")

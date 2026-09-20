@@ -30,7 +30,7 @@ type Info struct {
 	// DirtyPaths are the changed files under the directory being published,
 	// which is narrower and more useful than "the repo is dirty".
 	DirtyPaths []string
-	// Remote is the origin URL, used to suggest metadata.skillhub.repository.
+	// Remote is the origin URL, used to suggest metadata.llmskillhub.repository.
 	Remote string
 }
 

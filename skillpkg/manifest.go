@@ -58,7 +58,7 @@ type Capabilities struct {
 }
 
 // HubMetadata is our namespace inside the manifest's `metadata` map. Namespacing
-// under `skillhub` rather than at metadata's root keeps us from colliding with
+// under HubKey rather than at metadata's root keeps us from colliding with
 // anyone else who uses that field.
 type HubMetadata struct {
 	Version      string       `yaml:"version" json:"version,omitempty"`
@@ -176,7 +176,7 @@ func ParseManifest(src []byte) (*Manifest, *Result) {
 				fmt.Sprintf("unknown frontmatter key %q", key),
 				At(SkillFile, line),
 				Hint("Allowed keys: name, description, license, allowed-tools, compatibility, metadata. "+
-					"Marketplace fields belong under metadata.skillhub."))
+					"Marketplace fields belong under metadata."+HubKey+"."))
 		}
 	}
 
@@ -243,25 +243,49 @@ func decodeOfficial(m *Manifest, key string, v *yaml.Node, line int, res *Result
 	}
 }
 
-// decodeHub pulls metadata.skillhub into typed form. Unknown keys under our own
-// namespace are tolerated — this is our field and we may add to it.
+// HubKey is the namespace this marketplace's fields live under inside the
+// spec's metadata map, and HubKeyLegacy is what it used to be.
+//
+// The spec asks for a key "reasonably unique to avoid accidental conflicts",
+// and skillhub is not: it is a common enough word that another tool in this
+// same space already publishes under it. llmskillhub is the domain, so it is
+// ours in a way the short form never was.
+const (
+	HubKey       = "llmskillhub"
+	HubKeyLegacy = "skillhub"
+)
+
+// decodeHub pulls metadata.llmskillhub into typed form. Unknown keys under our
+// own namespace are tolerated — this is our field and we may add to it.
+//
+// The old key still works. Nothing published used it when the name changed,
+// but the guide had shown it and a package written against that page should
+// not become invalid because we renamed something. The new key wins if a
+// manifest somehow carries both.
 func decodeHub(m *Manifest, metaNode *yaml.Node, line int, res *Result) {
+	var node *yaml.Node
 	for i := 0; i+1 < len(metaNode.Content); i += 2 {
-		if metaNode.Content[i].Value != "skillhub" {
-			continue
+		switch metaNode.Content[i].Value {
+		case HubKey:
+			node = metaNode.Content[i+1]
+		case HubKeyLegacy:
+			if node == nil {
+				node = metaNode.Content[i+1]
+			}
 		}
-		hub := metaNode.Content[i+1]
-		if hub.Kind != yaml.MappingNode {
-			res.Add(SeverityError, "invalid_hub_metadata",
-				"metadata.skillhub must be a mapping", At(SkillFile, hub.Line+1))
-			return
-		}
-		if err := hub.Decode(&m.Hub); err != nil {
-			res.Add(SeverityError, "invalid_hub_metadata",
-				fmt.Sprintf("metadata.skillhub could not be decoded: %v", err),
-				At(SkillFile, hub.Line+1))
-		}
+	}
+	if node == nil {
 		return
+	}
+	if node.Kind != yaml.MappingNode {
+		res.Add(SeverityError, "invalid_hub_metadata",
+			"metadata."+HubKey+" must be a mapping", At(SkillFile, node.Line+1))
+		return
+	}
+	if err := node.Decode(&m.Hub); err != nil {
+		res.Add(SeverityError, "invalid_hub_metadata",
+			fmt.Sprintf("metadata.%s could not be decoded: %v", HubKey, err),
+			At(SkillFile, node.Line+1))
 	}
 }
 
@@ -322,7 +346,7 @@ func validateManifest(m *Manifest, seen map[string]int, res *Result) {
 func driftHint(key string) string {
 	switch key {
 	case "version":
-		return "Move it to metadata.skillhub.version, or pass --version at publish time."
+		return "Move it to metadata.llmskillhub.version, or pass --version at publish time."
 	case "user-invocable", "argument-hint", "disable-model-invocation", "tools":
 		return "This is a Claude Code plugin field. Keep it if you ship as a plugin; it is ignored elsewhere."
 	}

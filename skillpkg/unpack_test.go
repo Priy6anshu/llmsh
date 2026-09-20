@@ -18,6 +18,9 @@ description: >
   user mentions "fill a PDF form", "flatten a PDF" or extracting field values, even if
   they do not say the word form.
 license: MIT
+# Deliberately the pre-rename key. This fixture is threaded through most of
+# the unpack tests, so leaving it here keeps the compatibility path exercised
+# by everything that uses it rather than only by the one test named for it.
 metadata:
   skillhub:
     version: 1.2.0

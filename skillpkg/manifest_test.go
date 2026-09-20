@@ -157,3 +157,58 @@ func TestDescriptionScoring(t *testing.T) {
 }
 
 const goodDescription = `Fills, flattens and validates AcroForm and XFA PDF forms. Use this skill whenever the user mentions "fill a PDF form" or "flatten a PDF", even if they do not say the word form.`
+
+// The namespace was renamed from skillhub to llmskillhub. Nothing published
+// used the old key at the time, but the guide had shown it, and a package
+// someone wrote against that page should not become invalid because we
+// changed our mind about a name.
+func TestHubNamespaceAcceptsBothKeys(t *testing.T) {
+	body := "\n\n# Title\n\n" + strings.Repeat("Body text that is long enough to be a real skill. ", 12)
+
+	for _, key := range []string{HubKey, HubKeyLegacy} {
+		t.Run(key, func(t *testing.T) {
+			src := []byte("---\nname: pdf-tools\n" +
+				"description: Fills PDF forms from structured data and extracts values back out. " +
+				"Use when the user mentions PDF forms or filling a PDF.\n" +
+				"metadata:\n  " + key + ":\n    version: 1.2.0\n" +
+				"    categories: [documents]\n    capabilities:\n      network: true\n" +
+				"      shell: false\n      filesystem: read\n---" + body)
+
+			m, res := ParseManifest(src)
+			for _, v := range res.Violations {
+				if v.Severity == SeverityError {
+					t.Fatalf("%s: %s — %s", key, v.Code, v.Message)
+				}
+			}
+			if m.Hub.Version != "1.2.0" {
+				t.Errorf("version = %q", m.Hub.Version)
+			}
+			if len(m.Hub.Categories) != 1 || m.Hub.Categories[0] != "documents" {
+				t.Errorf("categories = %v", m.Hub.Categories)
+			}
+			if !m.Hub.Capabilities.Network || m.Hub.Capabilities.Filesystem != "read" {
+				t.Errorf("capabilities = %+v", m.Hub.Capabilities)
+			}
+		})
+	}
+}
+
+// Both at once is not a shape to encourage, but it has one obvious right
+// answer: the key we ask for now.
+func TestTheCurrentHubKeyWins(t *testing.T) {
+	body := "\n\n# Title\n\n" + strings.Repeat("Body text that is long enough to be a real skill. ", 12)
+	src := []byte("---\nname: pdf-tools\n" +
+		"description: Fills PDF forms from structured data and extracts values back out. " +
+		"Use when the user mentions PDF forms or filling a PDF.\n" +
+		"metadata:\n  skillhub:\n    version: 0.0.1\n  llmskillhub:\n    version: 2.0.0\n---" + body)
+
+	m, res := ParseManifest(src)
+	for _, v := range res.Violations {
+		if v.Severity == SeverityError {
+			t.Fatalf("%s — %s", v.Code, v.Message)
+		}
+	}
+	if m.Hub.Version != "2.0.0" {
+		t.Errorf("version = %q, want the llmskillhub one", m.Hub.Version)
+	}
+}

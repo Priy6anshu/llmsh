@@ -149,11 +149,11 @@ func ScoreCompleteness(m *Manifest, files []FileEntry, desc DescriptionScore) Co
 	}
 
 	add(30, desc.Total >= 70, "improve the description score to 70 or above")
-	add(10, len(m.Hub.Keywords) >= 3, "add at least 3 keywords under metadata.skillhub.keywords")
-	add(5, len(m.Hub.Categories) >= 1, "set a category under metadata.skillhub.categories")
+	add(10, len(m.Hub.Keywords) >= 3, "add at least 3 keywords under metadata.llmskillhub.keywords")
+	add(5, len(m.Hub.Categories) >= 1, "set a category under metadata.llmskillhub.categories")
 	add(15, m.Compatibility != "" || m.Hub.Capabilities.Filesystem != "" ||
 		m.Hub.Capabilities.Network || m.Hub.Capabilities.Shell,
-		"declare what the skill needs and touches, via compatibility or metadata.skillhub.capabilities")
+		"declare what the skill needs and touches, via compatibility or metadata.llmskillhub.capabilities")
 	add(10, m.License != "", "declare a license")
 	add(10, m.BodyWords >= 200 && m.BodyWords <= 5000,
 		fmt.Sprintf("the instructions are %d words; aim for 200-5000", m.BodyWords))
