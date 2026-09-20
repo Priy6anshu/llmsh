@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 )
 
@@ -83,7 +84,7 @@ func main() {
 		// hand reaches for it is fine as long as it is the same thing.
 		err = cmdPublish(args)
 	case "version", "--version", "-v":
-		fmt.Println("llmsh " + version)
+		fmt.Println("llmsh " + buildVersion())
 	case "help", "--help", "-h":
 		fmt.Print(usage)
 	default:
@@ -100,4 +101,23 @@ func main() {
 }
 
 // version is set at build time: go build -ldflags "-X main.version=1.0.0"
-var version = "dev"
+var version = ""
+
+// buildVersion is what `llmsh version` prints.
+//
+// The release workflow stamps it with ldflags. `go install ...@v0.1.0` cannot
+// -- there is nowhere to pass a flag -- so it falls back to the module version
+// the toolchain recorded, which is exactly the tag that was installed. Without
+// this, every Go install reports "dev" and no bug report from one is traceable
+// to a build.
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return strings.TrimPrefix(v, "v")
+		}
+	}
+	return "dev"
+}
