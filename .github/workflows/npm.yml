@@ -53,6 +53,26 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "publishing $V"
 
+      # Prove the token before anything is published.
+      #
+      # npm publish --dry-run does not authenticate, so a dry run passes with
+      # no token at all and tells you nothing about the real one. Without this
+      # check a bad token is discovered partway through: some platform
+      # packages already on the registry, the wrapper not, and those version
+      # numbers burned -- npm never lets a version be republished. whoami costs
+      # one request and turns that into a failure before the first publish.
+      - name: Check the token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN is empty. It must be a REPOSITORY secret" \
+                 "(Settings > Secrets and variables > Actions > Repository secrets)," \
+                 "or an environment secret with 'environment:' declared on this job."
+            exit 1
+          fi
+          echo "publishing as $(npm whoami)"
+
       - name: Publish
         env:
           # An npm automation token. Nothing else in this workflow reads it,
