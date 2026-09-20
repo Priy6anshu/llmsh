@@ -40,7 +40,22 @@ sha() {
 }
 
 echo "llmsh $VERSION -> npm  ${NPM_ARGS[*]:-}"
-curl -fsSL -o "$WORK/SHA256SUMS" "$BASE/SHA256SUMS"
+
+# Say which version is missing, and which ones are not.
+#
+# This packages a release rather than building one, so a version that was
+# never released has nothing to package. Left to curl that is "error: 404"
+# against a URL nobody has in their head, and the answer -- a typo in a version
+# box -- is two commands away. It is the likeliest thing to go wrong here, so
+# it gets the clearest failure.
+if ! curl -fsSL -o "$WORK/SHA256SUMS" "$BASE/SHA256SUMS"; then
+  echo "publish.sh: no release v$VERSION in $REPO, or it has no SHA256SUMS." >&2
+  echo "  Releases that do exist:" >&2
+  curl -fsSL "https://api.github.com/repos/$REPO/releases" 2>/dev/null |
+    sed -n 's/.*"tag_name": *"\([^"]*\)".*/    \1/p' >&2 || echo "    (could not list)" >&2
+  echo "  Publish one of those, or cut the release first." >&2
+  exit 1
+fi
 
 # go/npm platform names differ; both are needed, so both are written down.
 PLATFORMS=(
