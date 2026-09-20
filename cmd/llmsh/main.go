@@ -31,6 +31,7 @@ Usage:
   llmsh install <owner>/<skill>  download, verify and unpack where an agent will load it
 
   llmsh login / logout / whoami  the stored access token
+  llmsh mcp                      serve the catalogue to an AI over MCP
 
 Flags:
   llmsh publish --version 1.2.0  override the version in SKILL.md
@@ -83,6 +84,8 @@ func main() {
 		// submits a version for review, and calling it push only because the
 		// hand reaches for it is fine as long as it is the same thing.
 		err = cmdPublish(args)
+	case "mcp":
+		err = cmdMCP(args)
 	case "version", "--version", "-v":
 		fmt.Println("llmsh " + buildVersion())
 	case "help", "--help", "-h":

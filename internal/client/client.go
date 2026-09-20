@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -307,4 +308,75 @@ func (c *Client) Download(owner, slug, version string) (archive []byte, digest s
 	}
 	b, err := io.ReadAll(io.LimitReader(blob.Body, 64<<20))
 	return b, digest, err
+}
+
+// SkillSummary is a catalogue entry as the list and detail endpoints return it.
+type SkillSummary struct {
+	Owner       string   `json:"owner"`
+	Slug        string   `json:"slug"`
+	FullName    string   `json:"full_name"`
+	Description string   `json:"description"`
+	Categories  []string `json:"categories"`
+	Keywords    []string `json:"keywords"`
+	License     string   `json:"license,omitempty"`
+	Repository  string   `json:"repository,omitempty"`
+	Downloads   int      `json:"downloads"`
+	UpdatedAt   string   `json:"updated_at"`
+	Latest      *Version `json:"latest_version,omitempty"`
+}
+
+// Search asks the catalogue, using the same endpoint and the same ranking the
+// website uses. There is deliberately no second search implementation here:
+// two rankings over one catalogue would disagree, and the one nobody was
+// looking at would be the one an agent saw.
+func (c *Client) Search(query, category, sort string, limit int) ([]SkillSummary, int, error) {
+	q := url.Values{}
+	if query != "" {
+		q.Set("q", query)
+	}
+	if category != "" {
+		q.Set("category", category)
+	}
+	if sort != "" {
+		q.Set("sort", sort)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	var out struct {
+		Skills []SkillSummary `json:"skills"`
+		Count  int            `json:"count"`
+	}
+	if err := c.getJSON("/v1/skills?"+q.Encode(), &out); err != nil {
+		return nil, 0, err
+	}
+	return out.Skills, out.Count, nil
+}
+
+// Skill fetches one entry.
+func (c *Client) Skill(owner, slug string) (*SkillSummary, error) {
+	var out SkillSummary
+	if err := c.getJSON(fmt.Sprintf("/v1/skills/%s/%s",
+		url.PathEscape(owner), url.PathEscape(slug)), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Category is one entry in the catalogue's fixed vocabulary.
+type Category struct {
+	Slug  string `json:"slug"`
+	Name  string `json:"name"`
+	Blurb string `json:"blurb"`
+	Count int    `json:"count"`
+}
+
+func (c *Client) Categories() ([]Category, error) {
+	var out struct {
+		Categories []Category `json:"categories"`
+	}
+	if err := c.getJSON("/v1/categories", &out); err != nil {
+		return nil, err
+	}
+	return out.Categories, nil
 }
