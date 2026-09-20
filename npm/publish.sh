@@ -17,9 +17,10 @@ set -euo pipefail
 VERSION="${1:?usage: publish.sh <version> [--dry-run] [--provenance]}"
 shift || true
 NPM_ARGS=()
+DRY=0
 for a in "$@"; do
   case "$a" in
-    --dry-run)    NPM_ARGS+=(--dry-run) ;;
+    --dry-run)    NPM_ARGS+=(--dry-run); DRY=1 ;;
     --provenance) NPM_ARGS+=(--provenance) ;;
     *) echo "publish.sh: unknown option $a" >&2; exit 2 ;;
   esac
@@ -132,14 +133,34 @@ $(printf '%s' "$deps" | sed '$ s/,$//')
 }
 EOF
 
+# Publish one package, unless the registry already has that exact version.
+#
+# npm never lets a version be republished, so a re-run of a publish that got
+# partway -- the platform packages up, the wrapper not -- dies with a 403 on
+# the very first package and never reaches the one that is actually missing.
+# The recovery for a half-finished publish has to be "run it again", because
+# that is what anyone will try first and there is nothing else to try.
+#
+# This cannot mask a real mistake: npm would refuse the republish anyway, so
+# the only choice here is between skipping it and stopping the run.
+publish_one() {
+  dir="$1"; name="$2"
+  if [ "$DRY" = 0 ] && npm view "$name@$VERSION" version >/dev/null 2>&1; then
+    printf '  %-34s %s already on the registry, skipping\n' "$name" "$VERSION"
+    return 0
+  fi
+  ( cd "$dir" && npm publish --access public ${NPM_ARGS[@]+"${NPM_ARGS[@]}"} )
+}
+
 # Platform packages first. The wrapper depends on them by exact version, and a
 # wrapper on the registry whose dependencies are not there yet is an install
 # that fails for everyone who is quick.
 echo
-for d in "$WORK"/llmsh-*; do
-  ( cd "$d" && npm publish --access public "${NPM_ARGS[@]:-}" )
+for spec in "${PLATFORMS[@]}"; do
+  read -r _ _ npmos npmcpu <<<"$spec"
+  publish_one "$WORK/llmsh-$npmos-$npmcpu" "$SCOPE/llmsh-$npmos-$npmcpu"
 done
-( cd "$WORK/wrapper" && npm publish --access public "${NPM_ARGS[@]:-}" )
+publish_one "$WORK/wrapper" "$WRAPPER"
 # A scoped package defaults to restricted, and npm reports a restricted
 # publish as a success -- the run goes green, the registry answers 404 to
 # everyone who is not you, and nothing says why. That is exactly what happened
@@ -150,15 +171,31 @@ done
 # registry afterwards anyway, because the failure is silent and the cost of
 # finding out late is a version number that can never be reused.
 echo
+if [ "$DRY" = 1 ]; then
+  echo "dry run: nothing was published, so there is no access to check"
+  echo
+  echo "would have published $WRAPPER@$VERSION"
+  exit 0
+fi
+
 fail=0
 for spec in "${PLATFORMS[@]}"; do
   read -r _ _ npmos npmcpu <<<"$spec"
   pkg="$SCOPE/llmsh-$npmos-$npmcpu"
-  status=$(npm access get status "$pkg" 2>/dev/null || echo "unknown")
+  # npm prints "<pkg>: public"; older versions printed a bare "public". Strip
+  # an optional "<name>: " prefix so both forms compare equal.
+  #
+  # The first version of this compared npm's whole line against "public", so it
+  # called every package private while printing the word "public" in the column
+  # beside it, and exited 1 on a publish that had completely succeeded. A check
+  # that cries wolf is worse than no check: the next real failure gets waved
+  # through by someone who has learned to ignore this step.
+  raw=$(npm access get status "$pkg" 2>/dev/null || echo unknown)
+  status=$(printf '%s' "${raw##*: }" | tr -d '[:space:]')
   printf '  %-34s %s\n' "$pkg" "$status"
   [ "$status" = "public" ] || fail=1
 done
-if [ "$fail" = 1 ] && [ ${#NPM_ARGS[@]} -eq 0 -o "${NPM_ARGS[*]}" != "--dry-run" ]; then
+if [ "$fail" = 1 ]; then
   echo >&2
   echo "publish.sh: some packages are not public. Fix with:" >&2
   for spec in "${PLATFORMS[@]}"; do

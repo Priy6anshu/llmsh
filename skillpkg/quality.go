@@ -196,6 +196,13 @@ func Quality(m *Manifest, files []FileEntry, res *Result) {
 	// An unrecognised category warns rather than blocks. Blocking on taxonomy is
 	// how a marketplace ends up stricter than the runtime, and creators route
 	// around strictness rather than complying with it.
+	if len(m.Hub.Categories) > MaxCategories {
+		res.Add(SeverityWarn, "too_many_categories",
+			fmt.Sprintf("%d categories; a skill filed under everything is found under nothing",
+				len(m.Hub.Categories)),
+			At(SkillFile, 0),
+			Hint(fmt.Sprintf("Keep the %d that describe it best.", MaxCategories)))
+	}
 	for _, c := range m.Hub.Categories {
 		if !IsCategory(c) {
 			res.Add(SeverityWarn, "unknown_category",
