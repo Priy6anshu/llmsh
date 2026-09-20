@@ -1,0 +1,103 @@
+// Command llmsh is the LLM SkillHub command line.
+//
+// It does not replace git and does not try to. A skill lives in a repository,
+// and git already gives you diffing, rollback and history on your own machine --
+// far better than a registry ever could. What was missing is that the two knew
+// nothing about each other, so this reads the repository when publishing:
+// refusing to ship uncommitted work by accident, and recording the commit a
+// version came from.
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+const usage = `llmsh — publish and manage LLM SkillHub skills
+
+Usage:
+  llmsh init [dir]               scaffold a new skill, asking what the validator needs
+  llmsh clone <owner>/<skill>    fetch a skill's source to work on
+  llmsh pull                     update a working copy to the newest version
+  llmsh checkout <version>       switch a working copy to a specific version
+
+  llmsh validate [dir]           check a skill folder, storing nothing
+  llmsh diff [dir]               what you would publish, against what is published
+  llmsh publish [dir]            package the folder and submit it for review
+  llmsh push [dir]               the same thing, if that is the word you reach for
+  llmsh status <skill>           versions, review state and what a reviewer asked for
+  llmsh install <owner>/<skill>  download, verify and unpack where an agent will load it
+
+  llmsh login / logout / whoami  the stored access token
+
+Flags:
+  llmsh publish --version 1.2.0  override the version in SKILL.md
+  llmsh publish --allow-dirty    publish even with uncommitted changes
+  llmsh publish --dry-run        validate on the server without storing anything
+  llmsh install name@1.2.0       install an exact version instead of the latest
+  llmsh install --dir ./skills   unpack somewhere specific
+
+Environment:
+  LLMSH_API       default https://api.llmskillhub.com
+  LLMSH_INGEST    default https://api.llmskillhub.com
+  LLMSH_TOKEN     a token, for CI, instead of the stored one
+`
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Print(usage)
+		os.Exit(2)
+	}
+	args := os.Args[2:]
+	var err error
+
+	switch os.Args[1] {
+	case "login":
+		err = cmdLogin(args)
+	case "logout":
+		err = cmdLogout()
+	case "whoami":
+		err = cmdWhoami()
+	case "validate":
+		err = cmdValidate(args)
+	case "diff":
+		err = cmdDiff(args)
+	case "publish":
+		err = cmdPublish(args)
+	case "status":
+		err = cmdStatus(args)
+	case "install":
+		err = cmdInstall(args)
+	case "init":
+		err = cmdInit(args)
+	case "clone":
+		err = cmdClone(args)
+	case "pull":
+		err = cmdPull(args)
+	case "checkout":
+		err = cmdCheckout(args)
+	case "push":
+		// An alias, not a second implementation. git push sends commits; this
+		// submits a version for review, and calling it push only because the
+		// hand reaches for it is fine as long as it is the same thing.
+		err = cmdPublish(args)
+	case "version", "--version", "-v":
+		fmt.Println("llmsh " + version)
+	case "help", "--help", "-h":
+		fmt.Print(usage)
+	default:
+		fmt.Fprintf(os.Stderr, "llmsh: unknown command %q\n\n%s", os.Args[1], usage)
+		os.Exit(2)
+	}
+
+	if err != nil {
+		// Multi-line errors carry a hint on the second line; both belong on
+		// stderr so a script's stdout stays parseable.
+		fmt.Fprintln(os.Stderr, "llmsh: "+strings.TrimSpace(err.Error()))
+		os.Exit(1)
+	}
+}
+
+// version is set at build time: go build -ldflags "-X main.version=1.0.0"
+var version = "dev"

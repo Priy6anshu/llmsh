@@ -1,0 +1,68 @@
+# Build llmsh for every platform and attach the binaries to the release.
+#
+# Triggered by a tag, because a release is a thing you decide to make rather
+# than something that happens on every merge. The tag is the version: v0.2.0
+# produces llmsh 0.2.0, and the binary reports it.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # So the matrix can be exercised without cutting a release.
+  workflow_dispatch:
+
+permissions:
+  contents: write # only to create the release and upload to it
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        id: build
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.0.0-dev"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          mkdir -p dist
+
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
+            os="${target%/*}"; arch="${target#*/}"
+            ext=""; [ "$os" = "windows" ] && ext=".exe"
+
+            # -trimpath so the binary carries no build-machine paths, and
+            # CGO off so a Linux build runs on any libc.
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=$VERSION" \
+              -o "dist/llmsh_${VERSION}_${os}_${arch}${ext}" ./cmd/llmsh
+          done
+
+          # Published beside the downloads so anyone can check they got the
+          # file this workflow built. Not a signature, and not claimed as one.
+          cd dist && sha256sum llmsh_* > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llmsh-binaries
+          path: dist/
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          # install.sh reads the latest release, so a draft would leave the
+          # installer pointing at the previous version with no sign why.
+          draft: false
