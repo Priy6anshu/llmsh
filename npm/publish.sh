@@ -99,7 +99,8 @@ for spec in "${PLATFORMS[@]}"; do
   "license": "MIT",
   "os": ["$npmos"],
   "cpu": ["$npmcpu"],
-  "files": ["bin"]
+  "files": ["bin"],
+  "publishConfig": { "access": "public" }
 }
 EOF
   deps+="    \"$pkg\": \"$VERSION\",
@@ -124,6 +125,7 @@ cat > "$WORK/wrapper/package.json" <<EOF
   "keywords": ["ai", "agent", "skills", "cli", "llm", "skillhub"],
   "bin": { "llmsh": "bin/llmsh.js" },
   "files": ["bin", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" },
   "optionalDependencies": {
 $(printf '%s' "$deps" | sed '$ s/,$//')
   }
@@ -138,5 +140,33 @@ for d in "$WORK"/llmsh-*; do
   ( cd "$d" && npm publish --access public "${NPM_ARGS[@]:-}" )
 done
 ( cd "$WORK/wrapper" && npm publish --access public "${NPM_ARGS[@]:-}" )
+# A scoped package defaults to restricted, and npm reports a restricted
+# publish as a success -- the run goes green, the registry answers 404 to
+# everyone who is not you, and nothing says why. That is exactly what happened
+# on the first real publish here: five private packages, a public wrapper
+# depending on them, and an install that produced a shim with no binary.
+#
+# --access public and publishConfig should both prevent it. This asks the
+# registry afterwards anyway, because the failure is silent and the cost of
+# finding out late is a version number that can never be reused.
+echo
+fail=0
+for spec in "${PLATFORMS[@]}"; do
+  read -r _ _ npmos npmcpu <<<"$spec"
+  pkg="$SCOPE/llmsh-$npmos-$npmcpu"
+  status=$(npm access get status "$pkg" 2>/dev/null || echo "unknown")
+  printf '  %-34s %s\n' "$pkg" "$status"
+  [ "$status" = "public" ] || fail=1
+done
+if [ "$fail" = 1 ] && [ ${#NPM_ARGS[@]} -eq 0 -o "${NPM_ARGS[*]}" != "--dry-run" ]; then
+  echo >&2
+  echo "publish.sh: some packages are not public. Fix with:" >&2
+  for spec in "${PLATFORMS[@]}"; do
+    read -r _ _ npmos npmcpu <<<"$spec"
+    echo "  npm access set status=public $SCOPE/llmsh-$npmos-$npmcpu" >&2
+  done
+  exit 1
+fi
+
 echo
 echo "published $WRAPPER@$VERSION"
