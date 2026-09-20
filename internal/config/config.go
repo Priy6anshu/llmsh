@@ -30,10 +30,10 @@ type Config struct {
 // is one line in a shell profile and is done by the people best placed to know
 // they need it.
 //
-// Both point at the same host because the deployment puts both services behind
-// one: Caddy sends /v1/validate, /v1/upload and /v1/frontmatter to ingest and
-// everything else to the api. They stay two settings because they are two
-// services -- a deployment that splits them again should not need a new CLI.
+// Both point at the same host because the public deployment puts the two
+// services behind one address. They stay two settings because they are two
+// services -- a deployment that splits them again should not need a new CLI,
+// and someone running their own is free to.
 //
 // var, not const, so a build can pin them:
 //
