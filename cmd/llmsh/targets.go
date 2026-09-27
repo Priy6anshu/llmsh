@@ -28,6 +28,13 @@ type target struct {
 	Name string
 	// Dir is where the unpacked skill directory goes, relative to the project.
 	Dir string
+	// Home is where it goes when there is no project directory, relative to the
+	// home directory. Empty means Dir works in both places, which is the common
+	// case -- .claude/skills is ~/.claude/skills -- and opencode is why the
+	// field exists: its project directory is .opencode/skills and its personal
+	// one is .config/opencode/skills, so joining home to Dir would write to
+	// ~/.opencode/skills, which nothing reads.
+	Home string
 	// Context is a single file that agent reads, empty when it reads Dir
 	// directly. When set, a delimited block naming the skill is kept in it.
 	Context string
@@ -44,6 +51,17 @@ var targets = map[string]target{
 		Name: "claude",
 		Dir:  filepath.Join(".claude", "skills"),
 		Note: "Claude Code loads this on its own, by the description in SKILL.md.",
+	},
+	// opencode reads skill folders natively, the way Claude Code does, so it
+	// needs no rule file and no context block. It also reads .claude/skills and
+	// .agents/skills, which means a skill installed for any of the other agents
+	// is already visible to it -- this target exists so that somebody who uses
+	// opencode alone gets its own directory rather than a competitor's.
+	"opencode": {
+		Name: "opencode",
+		Dir:  filepath.Join(".opencode", "skills"),
+		Home: filepath.Join(".config", "opencode", "skills"),
+		Note: "opencode loads this on its own, by the description in SKILL.md.",
 	},
 	"cursor": {
 		Name: "cursor",

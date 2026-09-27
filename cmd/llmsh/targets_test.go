@@ -124,10 +124,19 @@ func TestEveryTargetIsUsable(t *testing.T) {
 		if tg.Dir == "" {
 			t.Errorf("%s has nowhere to put a skill", name)
 		}
-		// An agent that reads neither a directory of skills nor a file we write
-		// would be installed for and never notice.
-		if tg.Rule == "" && tg.Context == "" && name != "claude" {
+		// An agent either reads a folder of skills itself or has to be told
+		// about one in a file it does read. A target that does neither would
+		// install successfully and be noticed by nothing.
+		//
+		// Named rather than inferred: adding an agent to the table is the moment
+		// to decide which of the two it is, and a new name that is silently
+		// neither is the bug this catches.
+		readsFolders := name == "claude" || name == "opencode"
+		if !readsFolders && tg.Rule == "" && tg.Context == "" {
 			t.Errorf("%s is told about a skill by nothing", name)
+		}
+		if readsFolders && (tg.Rule != "" || tg.Context != "") {
+			t.Errorf("%s reads folders, so it needs no rule or context file", name)
 		}
 		if tg.Rule != "" && tg.Context != "" {
 			t.Errorf("%s writes both a rule and a context block; pick one", name)
@@ -145,4 +154,24 @@ func read(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// opencode's personal skills directory is not its project one with a home
+// prefix, which every other target here happens to be. Getting that wrong
+// writes to ~/.opencode/skills, a path nothing reads, and the install reports
+// success.
+func TestATargetWhoseGlobalPathDiffersSaysSo(t *testing.T) {
+	oc, err := lookupTarget("opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oc.Home == "" {
+		t.Fatal("opencode needs an explicit Home; ~/.opencode/skills is not where it looks")
+	}
+	if oc.Home == oc.Dir {
+		t.Errorf("Home %q equals Dir; then it did not need to be set", oc.Home)
+	}
+	if !strings.Contains(oc.Home, "opencode") || !strings.Contains(oc.Home, "skills") {
+		t.Errorf("opencode Home is %q", oc.Home)
+	}
 }

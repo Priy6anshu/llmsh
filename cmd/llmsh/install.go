@@ -246,7 +246,11 @@ func installDir(explicit string, agent target) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	p := filepath.Join(home, agent.Dir)
+	under := agent.Home
+	if under == "" {
+		under = agent.Dir
+	}
+	p := filepath.Join(home, under)
 	return p, os.MkdirAll(p, 0o755)
 }
 
