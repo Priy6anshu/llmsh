@@ -31,6 +31,7 @@ install a file that does not match.
 ```sh
 llmsh install anthropics/mcp-builder     # download, verify, unpack
 llmsh install name@1.2.0                 # an exact version
+llmsh install name -for cursor           # put it where Cursor will read it
 llmsh validate ./my-skill                # check it locally, storing nothing
 llmsh publish ./my-skill                 # submit it for review
 llmsh status owner/skill                 # versions and review state
@@ -39,6 +40,32 @@ llmsh login                              # store an access token
 
 `llmsh` reads the repository when publishing: it will not ship uncommitted work
 by accident, and it records the commit a version came from.
+
+## Any agent, not just Claude
+
+A skill is a folder of instructions, which is not a Claude idea. Where those
+instructions have to live to be read is different for every agent, so `-for`
+puts them where yours looks.
+
+| `-for` | where the skill goes | how the agent hears about it |
+|---|---|---|
+| `claude` | `.claude/skills/` | reads the folder, picks by description |
+| `opencode` | `.opencode/skills/` | the same |
+| `cursor` | `.cursor/skills/` | a rule in `.cursor/rules/` |
+| `codex` | `.agents/skills/` | a block in `AGENTS.md` |
+| `gemini` | `.agents/skills/` | a block in `GEMINI.md` |
+
+Codex and Gemini CLI read one project file rather than a folder, so the skill's
+instructions are written into it between comment markers naming the skill.
+Everything outside those markers is yours and is never touched: installing again
+replaces only that block, and a file whose markers look half-written is refused
+rather than repaired.
+
+Those two share `.agents/skills`, so installing the same skill for the second of
+them re-uses the copy that is there once its digest matches, rather than
+downloading it twice. opencode reads `.claude/skills` and `.agents/skills` as
+well as its own directory, so anything installed for another agent is already
+visible to it.
 
 ## Configuration
 
