@@ -65,6 +65,15 @@ func validatePath(name string) error {
 	return nil
 }
 
+// ValidateEntryPath is validatePath, for callers outside this package that
+// build a package from paths somebody else chose.
+//
+// ingest does exactly that when a skill is edited in the browser: the file
+// names arrive in a form, and they are about to become paths on our disk. The
+// rules are the same ones an archive entry has to satisfy, and there must not
+// be a second, more forgiving copy of them for the path that skips the zip.
+func ValidateEntryPath(name string) error { return validatePath(name) }
+
 // isDeceptiveRune covers the characters that let a filename render as something
 // other than what it is: RTL/LTR overrides and isolates, and zero-width joiners.
 // "report.dp‮mk.txt" displays as "report.txt.kmd". Legitimate skills do not

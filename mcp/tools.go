@@ -14,11 +14,11 @@ var Tools = []map[string]any{
 	{
 		"name":        "search_skills",
 		"title":       "Search skills",
-		"description": "Search the LLM SkillHub catalogue for published agent skills — reusable instructions, scripts and references an agent can load. Use when the user asks for a capability you do not have, mentions finding or installing a skill, or describes a task (\"fill a PDF form\", \"clean this CSV\") that a published skill might already do.",
+		"description": "Find skills by describing the task, in a sentence, in whatever words the user used — the catalogue matches meaning as well as words, so \"make an animated picture for chat\" finds a Slack GIF skill that shares none of those words with it. Use when the user asks for a capability you do not have, or describes something a published skill might already do. If you already know the skill's name, call get_skill instead: this searches, that fetches. Read the first line of the result: it says whether these matched what you asked or are only related to it.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query":    map[string]any{"type": "string", "description": "What the skill should do, in the words someone would use."},
+				"query":    map[string]any{"type": "string", "description": "What the skill should do, phrased as the task rather than as a name. A sentence works better than a keyword."},
 				"category": map[string]any{"type": "string", "description": "Restrict to one category slug; see list_categories."},
 				"limit":    map[string]any{"type": "integer", "description": "How many to return. Default 10, maximum 50."},
 			},
@@ -27,29 +27,29 @@ var Tools = []map[string]any{
 	{
 		"name":        "get_skill",
 		"title":       "Get a skill",
-		"description": "Full detail for one skill: description, categories, licence, and every published version with its digest and size. Use after search_skills to decide whether a candidate fits.",
+		"description": "Full detail for one named skill: description, categories, licence, and every published version with its digest and size. Use whenever you already know the name — from the user, from a link, or from a search_skills result — rather than searching for a name you have. Searching for a name you already know costs a call and can return something else.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"owner": map[string]any{"type": "string"},
-				"slug":  map[string]any{"type": "string"},
+				"name":  map[string]any{"type": "string", "description": "The skill, as \"owner/slug\" or just \"slug\". A slug alone is usually enough; when more than one publisher has that name the reply lists them, so ask again with the owner."},
+				"owner": map[string]any{"type": "string", "description": "Alternative to name: the publisher's handle."},
+				"slug":  map[string]any{"type": "string", "description": "Alternative to name: the skill's own name."},
 			},
-			"required": []string{"owner", "slug"},
 		},
 	},
 	{
 		"name":        "read_skill_file",
 		"title":       "Read a file from a skill",
-		"description": "Read one file out of a published version — SKILL.md for the instructions themselves, or any script or reference it ships. Use to check what a skill actually does before recommending it.",
+		"description": "Read one file out of a published version. Defaults to SKILL.md, the skill's own instructions, so a name alone answers \"what does this actually do\" — you do not need get_skill first. Pass path for any script or reference it ships.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"owner":   map[string]any{"type": "string"},
-				"slug":    map[string]any{"type": "string"},
-				"path":    map[string]any{"type": "string", "description": "Path inside the package, e.g. SKILL.md."},
+				"name":    map[string]any{"type": "string", "description": "The skill, as \"owner/slug\" or just \"slug\"."},
+				"owner":   map[string]any{"type": "string", "description": "Alternative to name."},
+				"slug":    map[string]any{"type": "string", "description": "Alternative to name."},
+				"path":    map[string]any{"type": "string", "description": "Path inside the package. Defaults to SKILL.md, which is the skill's own instructions."},
 				"version": map[string]any{"type": "string", "description": "Defaults to the latest published version."},
 			},
-			"required": []string{"owner", "slug", "path"},
 		},
 	},
 	{
@@ -74,11 +74,11 @@ var Tools = []map[string]any{
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"owner":   map[string]any{"type": "string"},
-				"slug":    map[string]any{"type": "string"},
+				"name":    map[string]any{"type": "string", "description": "The skill, as \"owner/slug\" or just \"slug\"."},
+				"owner":   map[string]any{"type": "string", "description": "Alternative to name."},
+				"slug":    map[string]any{"type": "string", "description": "Alternative to name."},
 				"version": map[string]any{"type": "string", "description": "Pin an exact version. Recommended."},
 			},
-			"required": []string{"owner", "slug"},
 		},
 	},
 }
@@ -89,11 +89,65 @@ var Tools = []map[string]any{
 // list costs fewer tokens than the same data wrapped in braces, and the model
 // does not have to be told a schema first. The fields a decision turns on --
 // the digest, the licence, the command -- are spelled out rather than implied.
+// splitName takes "owner/slug" or "slug" and gives back both halves, the owner
+// empty when it was not offered.
+//
+// An unqualified name can be ambiguous, and the caller is told so rather than
+// guessed at -- names are unique per publisher since 013, so two people may
+// each have a "pricing-strategy". See resolve in the server, which refuses and
+// names the candidates.
+func splitName(name string) (owner, slug string) {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "@"))
+	if o, s, ok := strings.Cut(name, "/"); ok {
+		return strings.TrimSpace(o), strings.TrimSpace(s)
+	}
+	return "", name
+}
+
+// summaryChars is how much of a description a search result carries.
+//
+// Measured on the live catalogue: a ten-result search ran 5,600 characters and
+// 83% of it was descriptions -- median 457, longest 746. They open with what
+// the skill does and go on to enumerate its features, and a list is read to
+// choose what to look at rather than to learn what a thing is. get_skill has
+// the whole text for the one that gets chosen.
+const summaryChars = 240
+
+// summarise shortens a description for a list, on a word boundary.
+func summarise(d string) string {
+	d = strings.TrimSpace(d)
+	if len([]rune(d)) <= summaryChars {
+		return d
+	}
+	// By rune, not by byte. These descriptions carry em dashes and accents,
+	// and slicing a string at a byte offset lands inside one often enough --
+	// the result is not a shorter description, it is a broken character.
+	cut := string([]rune(d)[:summaryChars])
+	// Back to the last space, so a list never ends mid-word. With no space to
+	// find, the text is one long token and cutting it anywhere is the same;
+	// take the budget as it stands.
+	if i := strings.LastIndex(cut, " "); i > len(cut)/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ,;:-—") + "…"
+}
+
+// qualify names a skill for display. Without an owner it is the slug alone,
+// rather than a slash with nothing in front of it -- a caller who gave a bare
+// name should not be shown "/slack-gif-creator" back.
+func qualify(owner, slug string) string {
+	if owner == "" {
+		return slug
+	}
+	return owner + "/" + slug
+}
+
 func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (string, error) {
 	var a struct {
 		Query    string `json:"query"`
 		Category string `json:"category"`
 		Limit    int    `json:"limit"`
+		Name     string `json:"name"`
 		Owner    string `json:"owner"`
 		Slug     string `json:"slug"`
 		Path     string `json:"path"`
@@ -105,6 +159,13 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 		}
 	}
 
+	// One name, however it was given. A model that has "anthropics/mcp-builder"
+	// in front of it should not have to take it apart, and one that has only
+	// "mcp-builder" should not have to search for the half it is missing.
+	if a.Name != "" {
+		a.Owner, a.Slug = splitName(a.Name)
+	}
+
 	switch name {
 	case "search_skills":
 		limit := a.Limit
@@ -114,17 +175,51 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 		if limit > 50 {
 			limit = 50
 		}
-		skills, count, err := s.Catalogue.Search(ctx, a.Query, a.Category, limit)
+		skills, meta, err := s.Catalogue.Search(ctx, a.Query, a.Category, limit)
 		if err != nil {
 			return "", err
 		}
 		if len(skills) == 0 {
-			return fmt.Sprintf("No skills match %q. Try a broader term, or list_categories to browse.", a.Query), nil
+			// How it looked decides what to do about it. Searched by meaning,
+			// a different wording will not find what this one missed -- and a
+			// model told only "no match" will try three more phrasings before
+			// concluding the same thing. Searched by words alone, rephrasing
+			// is exactly what might work.
+			if meta.Semantic {
+				return fmt.Sprintf("No skills match %q. The catalogue was searched by meaning as well as by words, "+
+					"so rephrasing is unlikely to find one. Use list_categories to browse, or tell the user nothing "+
+					"published does this yet.", a.Query), nil
+			}
+			// One word is matched literally on purpose, not for want of a
+			// model: a lone word embeds to a vague point that sits close to
+			// everything, so meaning was measured and deliberately not used.
+			// Saying "unavailable" blamed an outage that was not happening
+			// and asked for a rewording, when what helps is more words.
+			if len(strings.Fields(strings.TrimSpace(a.Query))) == 1 {
+				return fmt.Sprintf("No skills match %q. A single word is matched literally rather than by "+
+					"meaning -- describe the task in a few words and the catalogue will search for what a "+
+					"skill does. Or list_categories to browse.", a.Query), nil
+			}
+			return fmt.Sprintf("No skills match %q, searched by words alone -- matching by meaning is "+
+				"unavailable just now. A different wording may work; list_categories to browse.", a.Query), nil
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "%d skill(s) match %q, showing %d:\n\n", count, a.Query, len(skills))
+		// Matches, or near misses, said before the list rather than after it.
+		//
+		// Relaxed means nothing contained every word, so the catalogue widened
+		// rather than answer with nothing. The results look identical either
+		// way -- a name and a description -- and the difference is whether a
+		// model should recommend one or keep looking. Not "N of M": this only
+		// ever knew N, and saying "4 match, showing 4" told a model the
+		// catalogue held four when it held four on this page.
+		if meta.Relaxed {
+			fmt.Fprintf(&b, "%d skill(s) related to %q. Nothing matched every word, so these are near misses "+
+				"rather than answers -- read one before recommending it.\n\n", len(skills), a.Query)
+		} else {
+			fmt.Fprintf(&b, "%d skill(s) for %q:\n\n", len(skills), a.Query)
+		}
 		for _, sk := range skills {
-			fmt.Fprintf(&b, "%s/%s\n  %s\n", sk.Owner, sk.Slug, sk.Description)
+			fmt.Fprintf(&b, "%s/%s\n  %s\n", sk.Owner, sk.Slug, summarise(sk.Description))
 			var bits []string
 			if sk.Latest != nil {
 				bits = append(bits, "v"+sk.Latest.Version,
@@ -136,12 +231,15 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 			bits = append(bits, fmt.Sprintf("%d installs", sk.Downloads))
 			fmt.Fprintf(&b, "  %s\n\n", joinNonEmpty(bits, " · "))
 		}
-		b.WriteString("Use get_skill for detail, read_skill_file to see what one actually does.")
+		if len(skills) == limit {
+			fmt.Fprintf(&b, "That is the first %d; raise limit to see more.\n", limit)
+		}
+		b.WriteString("Descriptions are shortened here; get_skill has the full text, read_skill_file has the instructions.")
 		return b.String(), nil
 
 	case "get_skill":
-		if a.Owner == "" || a.Slug == "" {
-			return "", fmt.Errorf("owner and slug are both required")
+		if a.Slug == "" {
+			return "", fmt.Errorf("name is required, as \"owner/slug\" or just \"slug\"")
 		}
 		sk, err := s.Catalogue.Skill(ctx, a.Owner, a.Slug)
 		if err != nil {
@@ -177,8 +275,16 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 		return b.String(), nil
 
 	case "read_skill_file":
-		if a.Owner == "" || a.Slug == "" || a.Path == "" {
-			return "", fmt.Errorf("owner, slug and path are all required")
+		if a.Slug == "" {
+			return "", fmt.Errorf("name is required, as \"owner/slug\" or just \"slug\"")
+		}
+		// SKILL.md by default, because it is the answer to "what does this
+		// actually do" and that is why the tool gets called. Requiring the
+		// path meant search, then get_skill to learn the shape of the
+		// package, then this -- three calls to read one file whose name never
+		// varies.
+		if a.Path == "" {
+			a.Path = "SKILL.md"
 		}
 		version := a.Version
 		if version == "" {
@@ -187,7 +293,7 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 				return "", err
 			}
 			if len(vs) == 0 {
-				return "", fmt.Errorf("%s/%s has no published versions", a.Owner, a.Slug)
+				return "", fmt.Errorf("%s has no published versions", qualify(a.Owner, a.Slug))
 			}
 			version = vs[0].Version
 		}
@@ -198,7 +304,7 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 		if !f.IsText {
 			return fmt.Sprintf("%s is not a text file (%s).", f.Path, humanBytes(f.Size)), nil
 		}
-		return fmt.Sprintf("%s/%s@%s — %s\n\n%s", a.Owner, a.Slug, version, f.Path, f.Content), nil
+		return fmt.Sprintf("%s@%s — %s\n\n%s", qualify(a.Owner, a.Slug), version, f.Path, f.Content), nil
 
 	case "list_categories":
 		cats, err := s.Catalogue.Categories(ctx)
@@ -226,10 +332,21 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 		return "Categories:\n\n" + b.String(), nil
 
 	case "install_command":
-		if a.Owner == "" || a.Slug == "" {
-			return "", fmt.Errorf("owner and slug are both required")
+		if a.Slug == "" {
+			return "", fmt.Errorf("name is required, as \"owner/slug\" or just \"slug\"")
 		}
-		ref := a.Owner + "/" + a.Slug
+		owner := a.Owner
+		if owner == "" {
+			// Resolved rather than left out. The command goes in front of a
+			// person, who is deciding whether to run it: "anthropics/x" says
+			// who wrote what they would be installing and "x" does not.
+			sk, err := s.Catalogue.Skill(ctx, "", a.Slug)
+			if err != nil {
+				return "", err
+			}
+			owner = sk.Owner
+		}
+		ref := owner + "/" + a.Slug
 		if a.Version != "" {
 			ref += "@" + a.Version
 		}

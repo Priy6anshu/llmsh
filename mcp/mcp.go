@@ -33,13 +33,28 @@ const (
 // routes: the CLI over the public HTTP API, the API straight from its own
 // repository. Neither should have to know which one it is.
 type Catalogue interface {
-	Search(ctx context.Context, query, category string, limit int) ([]Skill, int, error)
+	Search(ctx context.Context, query, category string, limit int) ([]Skill, SearchMeta, error)
 	Skill(ctx context.Context, owner, slug string) (*Skill, error)
 	Versions(ctx context.Context, owner, slug string) ([]Version, error)
 	File(ctx context.Context, owner, slug, version, path string) (*File, error)
 	Categories(ctx context.Context) ([]Category, error)
 	// WebURL is where a person can open a skill, for links in the answers.
 	WebURL(owner, slug string) string
+}
+
+// SearchMeta is how the catalogue arrived at the results, which the results
+// themselves do not show.
+//
+// A model choosing between five names cannot tell a list of things that match
+// from a list of things that are merely nearby, and the difference decides
+// whether it recommends one or keeps looking. The catalogue knows; it used to
+// stop knowing at this boundary.
+type SearchMeta struct {
+	// Semantic is true when meaning was compared as well as words.
+	Semantic bool
+	// Relaxed is true when nothing contained every word of the query, so the
+	// catalogue widened the match rather than answer with nothing.
+	Relaxed bool
 }
 
 type Skill struct {

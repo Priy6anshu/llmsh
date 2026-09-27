@@ -329,7 +329,21 @@ type SkillSummary struct {
 // website uses. There is deliberately no second search implementation here:
 // two rankings over one catalogue would disagree, and the one nobody was
 // looking at would be the one an agent saw.
-func (c *Client) Search(query, category, sort string, limit int) ([]SkillSummary, int, error) {
+// SearchResult is how the catalogue answered, beside what it answered with.
+//
+// Relaxed and Semantic are the difference between "these match" and "these are
+// related", which is the one thing a caller cannot work out from the list
+// itself -- and the MCP server passes it through to an agent for exactly that
+// reason.
+type SearchResult struct {
+	Skills   []SkillSummary
+	Count    int
+	Relaxed  bool
+	Semantic bool
+	HasMore  bool
+}
+
+func (c *Client) Search(query, category, sort string, limit int) (SearchResult, error) {
 	q := url.Values{}
 	if query != "" {
 		q.Set("q", query)
@@ -344,13 +358,17 @@ func (c *Client) Search(query, category, sort string, limit int) ([]SkillSummary
 		q.Set("limit", strconv.Itoa(limit))
 	}
 	var out struct {
-		Skills []SkillSummary `json:"skills"`
-		Count  int            `json:"count"`
+		Skills   []SkillSummary `json:"skills"`
+		Count    int            `json:"count"`
+		Relaxed  bool           `json:"relaxed"`
+		Semantic bool           `json:"semantic"`
+		HasMore  bool           `json:"has_more"`
 	}
 	if err := c.getJSON("/v1/skills?"+q.Encode(), &out); err != nil {
-		return nil, 0, err
+		return SearchResult{}, err
 	}
-	return out.Skills, out.Count, nil
+	return SearchResult{Skills: out.Skills, Count: out.Count,
+		Relaxed: out.Relaxed, Semantic: out.Semantic, HasMore: out.HasMore}, nil
 }
 
 // Skill fetches one entry.

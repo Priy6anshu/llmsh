@@ -89,16 +89,18 @@ type httpCatalogue struct {
 	web string
 }
 
-func (h *httpCatalogue) Search(_ context.Context, query, category string, limit int) ([]mcp.Skill, int, error) {
-	out, count, err := h.c.Search(query, category, "", limit)
+func (h *httpCatalogue) Search(_ context.Context, query, category string, limit int) ([]mcp.Skill, mcp.SearchMeta, error) {
+	res, err := h.c.Search(query, category, "", limit)
 	if err != nil {
-		return nil, 0, err
+		return nil, mcp.SearchMeta{}, err
 	}
-	skills := make([]mcp.Skill, 0, len(out))
-	for _, s := range out {
+	skills := make([]mcp.Skill, 0, len(res.Skills))
+	for _, s := range res.Skills {
 		skills = append(skills, toMCP(s))
 	}
-	return skills, count, nil
+	// Carried through rather than dropped: an agent that cannot tell a match
+	// from a near-miss presents both as the answer.
+	return skills, mcp.SearchMeta{Semantic: res.Semantic, Relaxed: res.Relaxed}, nil
 }
 
 func (h *httpCatalogue) Skill(_ context.Context, owner, slug string) (*mcp.Skill, error) {
