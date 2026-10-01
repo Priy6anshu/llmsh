@@ -1,6 +1,9 @@
 package main
 
-import "flag"
+import (
+	"flag"
+	"os"
+)
 
 // parseArgs parses flags and positionals in any order.
 //
@@ -34,4 +37,16 @@ func first(positional []string, def string) string {
 		return positional[0]
 	}
 	return def
+}
+
+// isDir reports whether this path is a directory that exists.
+//
+// Used to tell a directory from an owner/name on the publish command line.
+// Deliberately a question about the filesystem rather than about the shape of
+// the string: "has a slash in it" describes both, and a rule that guessed
+// between them would eventually guess wrong about somebody's relative path and
+// publish into a space they never named.
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }

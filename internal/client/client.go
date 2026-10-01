@@ -137,15 +137,65 @@ type UploadResponse struct {
 // inflates and checks the archive and stores nothing; /v1/upload stores. A flag
 // that only changed what the CLI printed -- which is what this was at first --
 // promises one thing and does the other, which is worse than not offering it.
-func (c *Client) Publish(slug, version string, archive []byte, dryRun bool) (*UploadResponse, error) {
+// Publish sends an archive. kind is "skill" or "eval"; empty means skill,
+// which is what every caller meant before there was a second kind.
+//
+// The kind travels in the query string rather than being inferred from the
+// archive, because the server settles it when it authorises the publish --
+// before a byte is stored -- and reads it back from the intent at commit. A
+// package that validated as one kind and recorded as another is the thing that
+// ordering prevents.
+// PublishOptions is what a publish is, beyond its bytes.
+//
+// A struct rather than five positional arguments, because the last two would be
+// adjacent bools: Publish(..., dryRun, private) and Publish(..., private,
+// dryRun) both compile, and one of them uploads somebody's private work to the
+// public catalogue while telling them it was a dry run.
+type PublishOptions struct {
+	Slug string
+	// Owner is whose space this goes into, when that is not the person
+	// running the command. A collaborator publishing into somebody else's
+	// skill names them; empty means your own space.
+	Owner   string
+	Version string
+	Kind    string
+	// Private keeps this out of the catalogue. Settled at upload because the
+	// server settles it when the publish is authorised -- it will not take it
+	// at commit, and a version that disagrees with its skill is refused.
+	Private bool
+	DryRun  bool
+}
+
+func (c *Client) Publish(opt PublishOptions, archive []byte) (*UploadResponse, error) {
+	slug, version, kind := opt.Slug, opt.Version, opt.Kind
+	dryRun := opt.DryRun
 	path := "/v1/upload"
 	q := url.Values{"slug": {slug}}
+	if opt.Owner != "" {
+		q.Set("owner", opt.Owner)
+	}
 	if version != "" {
 		q.Set("version", version)
 	}
+	if kind != "" && kind != "skill" {
+		q.Set("kind", kind)
+	}
+	if opt.Private {
+		q.Set("private", "1")
+	}
 	if dryRun {
 		// validate takes no slug or version: it reports on the bytes alone.
+		// The kind still goes, because the two kinds are read by different
+		// validators and a dry run that used the wrong one would report on
+		// rules this package was never going to be judged by.
 		path, q = "/v1/validate", url.Values{}
+		if kind != "" && kind != "skill" {
+			q.Set("kind", kind)
+		}
+		// private is deliberately not sent on a validate. Validation reads the
+		// bytes and says whether they are a well-formed package, which is the
+		// same question either way -- and /v1/validate stores nothing, so there
+		// is no visibility for it to be about.
 	}
 	req, err := http.NewRequest("POST", c.Ingest+path+"?"+q.Encode(), bytes.NewReader(archive))
 	if err != nil {

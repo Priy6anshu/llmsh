@@ -122,7 +122,14 @@ func isForbiddenPath(name string) bool {
 
 // isStripped reports paths the official packager also drops, so a package built
 // by our CLI and one built by theirs agree. rel is relative to the package root.
-func isStripped(rel string) bool {
+func isStripped(rel string) bool { return isStrippedKeeping(rel, nil) }
+
+// isStrippedKeeping is isStripped with an exemption list for root directories.
+//
+// evals/ is the only entry in StripRootDirs and the only reason this exists: it
+// is packaging in a skill and payload in an eval, and one constant cannot be
+// both.
+func isStrippedKeeping(rel string, keepRoots []string) bool {
 	segs := strings.Split(rel, "/")
 	for _, seg := range segs {
 		for _, d := range StripDirs {
@@ -133,7 +140,7 @@ func isStripped(rel string) bool {
 	}
 	if len(segs) > 1 {
 		for _, d := range StripRootDirs {
-			if segs[0] == d {
+			if segs[0] == d && !contains(keepRoots, d) {
 				return true
 			}
 		}
@@ -146,6 +153,15 @@ func isStripped(rel string) bool {
 	}
 	for _, g := range StripGlobs {
 		if ok, _ := path.Match(g, base); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
 			return true
 		}
 	}

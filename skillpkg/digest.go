@@ -51,6 +51,25 @@ func TreeDigest(files []FileEntry) string {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
+// DigestAlgorithm names the scheme above, for the API to state in a payload.
+//
+// Sent on every version because the failure it prevents is expensive and
+// silent: a reader who assumes `digest` is sha256 of the .skill file gets a
+// mismatch, and a mismatched hash on a package registry reads as tampering
+// rather than as a naming problem. One field ends that guess.
+const DigestAlgorithm = "tree-sha256"
+
+// ArchiveSHA256 hashes the bytes of a stored archive.
+//
+// Deliberately separate from TreeDigest and never a replacement for it. This
+// changes whenever the archive is repacked -- different compression, a
+// different zip writer, a reordered central directory -- while the content is
+// untouched, which is exactly why it cannot be the identity and exactly why it
+// is the number somebody can check with shasum.
+func ArchiveSHA256(b []byte) string {
+	return hashBytes(b)
+}
+
 // ShortDigest renders a digest the way the UI shows it beside a version:
 // "1.2.0 · e3b0c44". It identifies; the semver resolves.
 func ShortDigest(digest string) string {

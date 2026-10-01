@@ -130,7 +130,7 @@ func TestCorpusQualityDistribution(t *testing.T) {
 		if err != nil || man.Description == "" {
 			continue
 		}
-		files, _ := collect(dir)
+		files, _ := collect(dir, nil)
 		var fes []FileEntry
 		for _, f := range files {
 			fes = append(fes, FileEntry{Path: f})

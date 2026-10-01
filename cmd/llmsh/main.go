@@ -32,11 +32,29 @@ Usage:
 
   llmsh login / logout / whoami  the stored access token
   llmsh mcp                      serve the catalogue to an AI over MCP
+`
+
+// evalUsage is shown only when evals are switched on.
+//
+// A build with them off says nothing about them, because every line here is a
+// promise that the command works -- and against a catalogue that has not
+// enabled evals, it does not. `llmsh publish` needs no entry of its own: it
+// recognises an eval directory by its manifest.yaml and says so if the switch
+// is off.
+const evalUsage = `
+Evals (LLMSH_EVALS=1):
+  llmsh publish [dir]            a folder with a manifest.yaml publishes as an eval
+  llmsh eval get <owner>/<name>  download an eval's dataset and rubrics
+  llmsh eval get --dir ./evals   where to unpack (default ./evals)
+`
+
+const usageTail = `
 
 Flags:
   llmsh publish --version 1.2.0  override the version in SKILL.md
   llmsh publish --allow-dirty    publish even with uncommitted changes
   llmsh publish --dry-run        validate on the server without storing anything
+  llmsh publish --private        into your space, not the catalogue; no review
   llmsh install name@1.2.0       install an exact version instead of the latest
   llmsh install --dir ./skills   unpack somewhere specific
 
@@ -44,11 +62,12 @@ Environment:
   LLMSH_API       default https://api.llmskillhub.com
   LLMSH_INGEST    default https://api.llmskillhub.com
   LLMSH_TOKEN     a token, for CI, instead of the stored one
+  LLMSH_EVALS     1 to work with evals as well as skills
 `
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Print(usage)
+		printUsage()
 		os.Exit(2)
 	}
 	args := os.Args[2:]
@@ -84,14 +103,16 @@ func main() {
 		// submits a version for review, and calling it push only because the
 		// hand reaches for it is fine as long as it is the same thing.
 		err = cmdPublish(args)
+	case "eval":
+		err = cmdEval(args)
 	case "mcp":
 		err = cmdMCP(args)
 	case "version", "--version", "-v":
 		fmt.Println("llmsh " + buildVersion())
 	case "help", "--help", "-h":
-		fmt.Print(usage)
+		printUsage()
 	default:
-		fmt.Fprintf(os.Stderr, "llmsh: unknown command %q\n\n%s", os.Args[1], usage)
+		fmt.Fprintf(os.Stderr, "llmsh: unknown command %q\n\n%s%s", os.Args[1], usage, usageTail)
 		os.Exit(2)
 	}
 
@@ -123,4 +144,13 @@ func buildVersion() string {
 		}
 	}
 	return "dev"
+}
+
+// printUsage writes the help, with the eval section only when it is usable.
+func printUsage() {
+	fmt.Print(usage)
+	if evalsEnabled() {
+		fmt.Print(evalUsage)
+	}
+	fmt.Print(usageTail)
 }

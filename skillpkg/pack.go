@@ -20,6 +20,11 @@ type PackOptions struct {
 	// official packager uses the skill's folder name; we default to the manifest
 	// name so the archive is self-describing regardless of local folder naming.
 	RootName string
+	// KeepRoots are root directories this package treats as payload rather than
+	// packaging. Empty keeps the official packager's behaviour exactly, which is
+	// what every skill wants; an eval passes "evals", because dropping it here
+	// would silently pack an eval with no samples in it.
+	KeepRoots []string
 }
 
 // Pack writes dir as a .skill zip.
@@ -31,7 +36,7 @@ type PackOptions struct {
 func Pack(dir string, w io.Writer, opts PackOptions) (*Result, []FileEntry, error) {
 	res := &Result{}
 
-	files, err := collect(dir)
+	files, err := collect(dir, opts.KeepRoots)
 	if err != nil {
 		return res, nil, err
 	}
@@ -110,7 +115,7 @@ func Pack(dir string, w io.Writer, opts PackOptions) (*Result, []FileEntry, erro
 
 // collect walks dir and returns slash-separated relative paths, sorted, with the
 // same exclusions the official packager applies.
-func collect(dir string) ([]string, error) {
+func collect(dir string, keepRoots []string) ([]string, error) {
 	var out []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -125,12 +130,12 @@ func collect(dir string) ([]string, error) {
 			return nil
 		}
 		if d.IsDir() {
-			if isStripped(rel + "/x") {
+			if isStrippedKeeping(rel+"/x", keepRoots) {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if isStripped(rel) || isForbiddenPath(rel) {
+		if isStrippedKeeping(rel, keepRoots) || isForbiddenPath(rel) {
 			return nil
 		}
 		out = append(out, rel)
@@ -147,7 +152,7 @@ func collect(dir string) ([]string, error) {
 // CLI print the digest before uploading and lets the server verify the client's
 // claim, without either side agreeing on zip bytes.
 func PackDigest(dir string) (string, []FileEntry, error) {
-	files, err := collect(dir)
+	files, err := collect(dir, nil)
 	if err != nil {
 		return "", nil, err
 	}
@@ -181,7 +186,7 @@ func ValidateDir(dir string) (*Manifest, *Result, error) {
 	if err != nil {
 		return nil, res, err
 	}
-	files, err := collect(dir)
+	files, err := collect(dir, nil)
 	if err != nil {
 		return man, res, err
 	}

@@ -41,6 +41,34 @@ llmsh login                              # store an access token
 `llmsh` reads the repository when publishing: it will not ship uncommitted work
 by accident, and it records the commit a version came from.
 
+## Private skills
+
+A skill can live in your own space instead of the catalogue:
+
+```sh
+llmsh publish ./my-skill --private
+```
+
+It is not reviewed, it is not listed, and it is available to you the moment it
+uploads. Search and `llmsh install` find it as normal, because your token says
+who you are; to anybody else it does not exist.
+
+Pass `--private` on every version, not only the first. Visibility belongs to the
+skill rather than to a release, and the server refuses a version that disagrees
+with its skill — publishing a public version into a private skill would take a
+listed package out of the catalogue as a side effect of shipping an update, and
+the reverse would put unreviewed work on the front page. Forgetting the flag is
+a refusal that names both sides.
+
+A private space holds 5 MB unpacked, counted across every version you keep
+rather than only the newest — ten revisions of a 500 KB skill fill it. Versions
+of a private skill can be deleted to make room, which is the one place anything
+here is deletable; a published public version is permanent because people depend
+on it.
+
+Collaborators are managed on the website: add somebody to your space, then choose
+which private skills they can see, or all of them.
+
 ## Any agent, not just Claude
 
 A skill is a folder of instructions, which is not a Claude idea. Where those
@@ -74,9 +102,46 @@ visible to it.
 | `LLMSH_API` | API address, default `https://api.llmskillhub.com` |
 | `LLMSH_INGEST` | upload address, default the same |
 | `LLMSH_TOKEN` | a token for CI, instead of the stored one |
+| `LLMSH_EVALS` | `1` to work with evals as well as skills |
 
 The stored token lives in your user config directory, `0600`, and is the only
 thing written there.
+
+## Evals
+
+An eval is the other kind of package: a dataset of cases with a manifest saying
+what they measure and how to judge an answer. Where a skill teaches an agent to
+do something, an eval checks whether it did.
+
+They are behind a switch, because a catalogue has to accept them before the
+command can do anything useful:
+
+```sh
+export LLMSH_EVALS=1
+```
+
+Publishing is the same command. A directory with a `manifest.yaml` publishes as
+an eval; one with a `SKILL.md` publishes as a skill. Nothing to remember and
+nothing to pass:
+
+```sh
+llmsh publish ./my-eval      # reads the manifest, counts the rows, submits it
+llmsh eval get owner/name    # fetch one back, into ./evals
+```
+
+`publish` reports what the package turned out to contain — how many samples,
+how many carry an expected answer, how many rubrics — because those are numbers
+you can check against what you believe you wrote. It also says plainly when an
+eval executes anything: a sample carrying a setup script, a sandbox, or a file
+fetched from a URL is content a reviewer will ask about, and better to see it
+before you submit than after.
+
+`eval get` unpacks to `./evals` rather than into an agent's skills directory.
+An agent's directories are for instructions, and dropping two hundred test
+cases into one would have it read them as guidance.
+
+If the switch is off, or the catalogue has not enabled evals, you get told
+which — not a 404 that looks like a fault in your package.
 
 ## What happens when you publish
 

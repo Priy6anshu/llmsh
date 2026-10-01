@@ -3,6 +3,7 @@ package skillpkg
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -171,6 +172,57 @@ func ScoreCompleteness(m *Manifest, files []FileEntry, desc DescriptionScore) Co
 
 // Quality appends advisory findings. Called by both the CLI and the server so the
 // creator sees the same report locally that the publish endpoint will produce.
+// referenceRe finds a path the instructions tell the reader to use.
+//
+// Three shapes, because those are the three ways a skill actually names one:
+// a command that runs it (python scripts/x.py, bash ./setup.sh), a Markdown
+// link or inline-code path, and a bare mention of a file under one of the
+// directories the spec gives meaning to.
+//
+// Deliberately anchored on those directory names rather than on "anything with
+// a slash". Prose is full of things that look like paths and are not -- an API
+// route, a JSON pointer, and/or -- and a check that cries wolf on those is one
+// a reviewer learns to scroll past, which costs more than it catches.
+var referenceRe = regexp.MustCompile(
+	`(?:^|[\s"'` + "`" + `(\[])\.?/?((?:scripts|references|assets|examples|templates|data)/[A-Za-z0-9._\-/]+\.[A-Za-z0-9]+)`)
+
+// missingReferences reports files the instructions point at that were not
+// published.
+//
+// This is the defect that matters most in a catalogue of instructions an agent
+// will follow: the model reads "run python scripts/rice_prioritizer.py",
+// there is no such file, and the failure surfaces to somebody who will blame
+// their agent or this catalogue rather than the package. It is also invisible
+// to every other check here -- the manifest can be perfect, the description
+// can score 100, and the skill still cannot do what it says.
+//
+// A warning rather than an error. Some skills reference a path the user is
+// expected to create, and refusing those outright would be stricter than the
+// runtime for no gain; what this is for is putting the discrepancy in front of
+// the reviewer, who can see in one line what the package claims and what it
+// contains.
+func missingReferences(m *Manifest, files []FileEntry) []string {
+	if m == nil || m.Body == "" {
+		return nil
+	}
+	have := make(map[string]bool, len(files))
+	for _, f := range files {
+		have[f.Path] = true
+	}
+	seen := map[string]bool{}
+	var missing []string
+	for _, match := range referenceRe.FindAllStringSubmatch(m.Body, -1) {
+		p := strings.TrimPrefix(match[1], "./")
+		if have[p] || seen[p] {
+			continue
+		}
+		seen[p] = true
+		missing = append(missing, p)
+	}
+	sort.Strings(missing)
+	return missing
+}
+
 func Quality(m *Manifest, files []FileEntry, res *Result) {
 	if m == nil || m.Description == "" {
 		return
@@ -193,6 +245,17 @@ func Quality(m *Manifest, files []FileEntry, res *Result) {
 			"description contains marketing language; state capability and triggers instead",
 			At(SkillFile, 0))
 	}
+	if missing := missingReferences(m, files); len(missing) > 0 {
+		shown := missing
+		if len(shown) > 5 {
+			shown = shown[:5]
+		}
+		res.Add(SeverityWarn, "missing_reference",
+			fmt.Sprintf("the instructions use %s, which %s not in this package",
+				strings.Join(shown, ", "), plural(len(shown), "is", "are")),
+			At(SkillFile, 0),
+			Hint("Ship the file, or drop the instruction that needs it — an agent that follows this will fail on that line."))
+	}
 	// An unrecognised category warns rather than blocks. Blocking on taxonomy is
 	// how a marketplace ends up stricter than the runtime, and creators route
 	// around strictness rather than complying with it.
@@ -205,9 +268,15 @@ func Quality(m *Manifest, files []FileEntry, res *Result) {
 	}
 	for _, c := range m.Hub.Categories {
 		if !IsCategory(c) {
+			// Not an error, and no longer a dead end either. The catalogue
+			// creates a category it has not seen, matching it first against the
+			// existing ones by spelling -- so "Dev Ops" joins devops rather
+			// than founding a rival. What this warning is for is the case where
+			// somebody meant one of the twelve and typed something near it, and
+			// would rather know now than discover their skill filed on its own.
 			res.Add(SeverityWarn, "unknown_category",
-				fmt.Sprintf("%q is not one of the catalogue's categories, so this skill will not appear under any of them", c),
-				At(SkillFile, 0), Hint("Valid categories: "+categoryList()))
+				fmt.Sprintf("%q is not one of the catalogue's twelve categories; publishing will create it", c),
+				At(SkillFile, 0), Hint("The built-in ones are: "+categoryList()))
 		}
 	}
 	if cs.Total < 60 {
@@ -220,4 +289,12 @@ func Quality(m *Manifest, files []FileEntry, res *Result) {
 			fmt.Sprintf("instructions are %d words; the body is loaded in full every time the skill triggers", m.BodyWords),
 			At(SkillFile, 0), Hint("Move detail into references/ and point at it from SKILL.md."))
 	}
+}
+
+// plural picks the verb, so a one-file finding does not read as a typo.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

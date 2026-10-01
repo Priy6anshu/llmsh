@@ -201,11 +201,57 @@ func cmdPublish(args []string) error {
 	version := fs.String("version", "", "version to publish (default: the one in SKILL.md)")
 	allowDirty := fs.Bool("allow-dirty", false, "publish even with uncommitted changes")
 	dryRun := fs.Bool("dry-run", false, "validate on the server without storing anything")
-	dir := first(parseArgs(fs, args), ".")
+	// Needed on every publish to a private skill, not only the first.
+	//
+	// The server settles visibility when it authorises the upload and refuses a
+	// version that disagrees with its skill, so there is no way to infer it
+	// here without asking first -- and asking would put a round trip on every
+	// publish to save a flag on some. Forgetting it is a 409 that names both
+	// sides and says what to pass, which is a better trade than a slower
+	// common case.
+	private := fs.Bool("private", false, "publish into your private space instead of the catalogue")
+	positional := parseArgs(fs, args)
+
+	// The argument is a directory, or the full name of a skill in somebody
+	// else's space.
+	//
+	// Both, because a publish into a space you do not own has to say whose, and
+	// a slug alone cannot: a collaborator may well have a skill of the same
+	// name, and the server would then resolve it to their own -- which is the
+	// bug this exists to close, and it did not announce itself. It published
+	// happily and made a second skill nobody asked for.
+	//
+	// Told apart by looking at the disk rather than by guessing at the string.
+	// A directory that is there is a directory, so every existing invocation
+	// keeps its meaning, and "owner/slug" is only read as a name when nothing
+	// of that path exists to mean anything else.
+	target, dir := "", first(positional, ".")
+	if strings.Contains(dir, "/") && !isDir(dir) {
+		target, dir = dir, first(positional[1:], ".")
+	}
+	var intoOwner, intoSlug string
+	if target != "" {
+		owner, slug, ok := strings.Cut(strings.TrimSuffix(target, "/"), "/")
+		if !ok || owner == "" || slug == "" || strings.Contains(slug, "/") {
+			return fmt.Errorf("%q is neither a directory that exists nor an owner/name\n"+
+				"  To publish into somebody else's space: llmsh publish <owner>/<name> [dir]", target)
+		}
+		intoOwner, intoSlug = owner, slug
+	}
 
 	c, _, err := clientFromConfig()
 	if err != nil {
 		return err
+	}
+
+	// Which kind this is, decided by looking rather than by asking. A
+	// directory with a manifest.yaml is an eval; everything else is a skill,
+	// which is what every directory was before there was a second kind.
+	if isEvalDir(dir) {
+		if !evalsEnabled() {
+			return evalRefusal(dir)
+		}
+		return publishEval(c, dir, *version, *allowDirty, *dryRun, *private)
 	}
 
 	man, res, err := skill.ValidateDir(dir)
@@ -217,6 +263,19 @@ func cmdPublish(args []string) error {
 	}
 	if errs, _ := report(res); errs > 0 {
 		return fmt.Errorf("%d error(s) — fix these first", errs)
+	}
+
+	// The name on the command line and the name in the package have to agree.
+	//
+	// Checked here rather than left to the server, which does reject the
+	// mismatch, because the server can only say the two disagree. Here it is
+	// still known which is which, so the message can say what to fix -- and
+	// the common case is somebody publishing the wrong directory into a space
+	// they do have write on, where the only clue is a name they did not type.
+	if intoSlug != "" && intoSlug != man.Name {
+		return fmt.Errorf("%s is named %q, but you asked to publish into %s/%s\n"+
+			"  Publish the directory that holds %s, or correct the name",
+			dir, man.Name, intoOwner, intoSlug, intoSlug)
 	}
 
 	// The git check. Publishing something that exists in no commit means the
@@ -254,10 +313,29 @@ func cmdPublish(args []string) error {
 		fmt.Printf("  from %s on %s\n", g.Short(), g.Branch)
 	}
 
+	// Whose space, said before it happens, because the difference is what a
+	// reader most needs to know and the reply only confirms it afterwards.
+	//
+	// "your space" is wrong when somebody is publishing into a space they
+	// collaborate on, and wrong in the direction that matters: it tells them
+	// the version went somewhere they control when it went somewhere they do
+	// not.
+	space := "your space"
+	if intoOwner != "" {
+		space = intoOwner + "'s space"
+	}
+	if *private {
+		fmt.Printf("  --private: into %s, not the catalogue. Nobody reviews it.\n", space)
+	} else if intoOwner != "" {
+		fmt.Printf("  into %s\n", space)
+	}
 	if *dryRun {
 		fmt.Println("  --dry-run: checking on the server, storing nothing")
 	}
-	out, err := c.Publish(man.Name, ver, buf.Bytes(), *dryRun)
+	out, err := c.Publish(client.PublishOptions{
+		Slug: man.Name, Owner: intoOwner, Version: ver, Kind: "skill",
+		Private: *private, DryRun: *dryRun,
+	}, buf.Bytes())
 	if err != nil {
 		return err
 	}
@@ -283,9 +361,26 @@ func cmdPublish(args []string) error {
 		fmt.Printf("\n  would publish %s@%s · digest %s\n", man.Name, ver, skill.ShortDigest(digestOf(files)))
 		fmt.Printf("  Nothing was stored.\n")
 	case out.OK:
-		fmt.Printf("\n  %s@%s submitted · digest %s · %s\n",
-			out.Slug, out.Version, out.ShortDigest, out.ReviewState)
-		fmt.Printf("  A person reads every version before it appears in the catalogue.\n")
+		// "submitted" and "a person reads every version" are both true of a
+		// public publish and both false of a private one: nothing was
+		// submitted to anybody, and nobody is going to read it. Printing them
+		// anyway would tell somebody their work is queued for review when it is
+		// already live in their space -- the same sentence the publish page had
+		// to stop showing for the same reason.
+		if *private {
+			fmt.Printf("\n  %s@%s is in %s · digest %s\n",
+				out.Slug, out.Version, space, out.ShortDigest)
+			if intoOwner != "" {
+				fmt.Printf("  Not reviewed and not listed. %s and their collaborators can see it.\n",
+					intoOwner)
+			} else {
+				fmt.Printf("  Not reviewed and not listed. Yours now; share it from the website.\n")
+			}
+		} else {
+			fmt.Printf("\n  %s@%s submitted · digest %s · %s\n",
+				out.Slug, out.Version, out.ShortDigest, out.ReviewState)
+			fmt.Printf("  A person reads every version before it appears in the catalogue.\n")
+		}
 	}
 	return nil
 }

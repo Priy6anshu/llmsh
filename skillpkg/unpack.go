@@ -46,7 +46,36 @@ type Inventory struct {
 //
 // Everything Inspect learns is the archive's own metadata and is attacker
 // controlled. Unpack re-verifies it while inflating.
+// Shape is the two questions reading an archive cannot answer generically:
+// which file has to be at the root, and which root directories are payload
+// rather than packaging.
+//
+// It exists because Inspect was not as generic as it looked. It required
+// SKILL.md and it stripped a root-level evals/ — both correct for a skill, and
+// both fatal for a package whose whole content is a dataset under evals/.
+type Shape struct {
+	// Required must exist at the package root.
+	Required string
+	// AlsoAccept are other names that satisfy Required. Both spellings of a
+	// YAML manifest are everywhere, and refusing a package over one letter
+	// teaches nobody anything.
+	AlsoAccept []string
+	// MissingCode is the violation raised when it does not.
+	MissingCode string
+	// KeepRoots are root directories to leave alone that would otherwise be
+	// stripped, matching the official packager.
+	KeepRoots []string
+}
+
+// SkillShape is what Inspect and UnpackFiles assume when not told otherwise, so
+// every existing caller keeps the behaviour it had.
+var SkillShape = Shape{Required: SkillFile, MissingCode: "missing_skill_md"}
+
 func Inspect(ra io.ReaderAt, size int64) (*Inventory, *Result) {
+	return InspectAs(ra, size, SkillShape)
+}
+
+func InspectAs(ra io.ReaderAt, size int64, sh Shape) (*Inventory, *Result) {
 	res := &Result{}
 
 	if size <= 0 {
@@ -225,12 +254,13 @@ func Inspect(ra io.ReaderAt, size int64) (*Inventory, *Result) {
 	inv.RootDir = detectRoot(inv.Entries)
 	for i := range inv.Entries {
 		inv.Entries[i].Rel = strings.TrimPrefix(inv.Entries[i].Name, inv.RootDir)
-		inv.Entries[i].Stripped = !inv.Entries[i].IsDir && isStripped(inv.Entries[i].Rel)
+		inv.Entries[i].Stripped = !inv.Entries[i].IsDir &&
+			isStrippedKeeping(inv.Entries[i].Rel, sh.KeepRoots)
 	}
 
-	if !hasEntry(inv, SkillFile) {
-		res.Add(SeverityError, "missing_skill_md",
-			fmt.Sprintf("no %s at the package root", SkillFile),
+	if sh.Required != "" && !hasEntry(inv, sh.Required) && !hasAny(inv, sh.AlsoAccept) {
+		res.Add(SeverityError, sh.MissingCode,
+			fmt.Sprintf("no %s at the package root", sh.Required),
 			Hint(rootHint(inv)))
 	}
 	return inv, res
@@ -331,8 +361,25 @@ type Package struct {
 // stream 10 GB. Every entry is read through a limit of its declared size PLUS ONE
 // byte: that extra byte is what distinguishes "ended exactly where it said" from
 // "kept going", which a plain limit would silently truncate instead of detecting.
-func Unpack(ctx context.Context, ra io.ReaderAt, size int64, dir string) (*Package, *Result, error) {
-	inv, res := Inspect(ra, size)
+// UnpackFiles inflates an archive and returns its files, checking nothing about
+// what kind of package it is.
+//
+// Split out of Unpack so a second kind of package can be built on the same
+// extraction rather than on a copy of it. Everything dangerous lives here --
+// the ratio guard, the header-lied and metadata-mismatch checks, path safety,
+// the write -- and a copy of this code is a place for a fix to be applied once
+// and forgotten once. What it does NOT do is require a manifest or know a
+// layout; those are the caller's, and they are what differ between a skill and
+// an eval.
+//
+// The returned Package has no Digest: an identifier is for something that will
+// exist, and whether it will is the caller's question to answer.
+func UnpackFiles(ctx context.Context, ra io.ReaderAt, size int64, dir string) (*Package, *Result, error) {
+	return UnpackFilesAs(ctx, ra, size, dir, SkillShape)
+}
+
+func UnpackFilesAs(ctx context.Context, ra io.ReaderAt, size int64, dir string, sh Shape) (*Package, *Result, error) {
+	inv, res := InspectAs(ra, size, sh)
 	if hasFatal(res) || inv == nil {
 		return nil, res, nil
 	}
@@ -423,6 +470,20 @@ func Unpack(ctx context.Context, ra io.ReaderAt, size int64, dir string) (*Packa
 		case "CHANGELOG.md":
 			pkg.Changelog = data
 		}
+	}
+
+	return pkg, res, nil
+}
+
+// Unpack inflates an archive and validates it as a skill.
+//
+// The extraction is UnpackFiles; what is left here is everything that makes a
+// package a SKILL rather than some other kind of package: a required SKILL.md,
+// its size, its frontmatter, and the directory layout the spec describes.
+func Unpack(ctx context.Context, ra io.ReaderAt, size int64, dir string) (*Package, *Result, error) {
+	pkg, res, err := UnpackFiles(ctx, ra, size, dir)
+	if err != nil || pkg == nil {
+		return pkg, res, err
 	}
 
 	if len(pkg.SkillMD) == 0 {
@@ -597,4 +658,13 @@ func humanBytes(n int64) string {
 		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
 	}
 	return fmt.Sprintf("%d B", n)
+}
+
+func hasAny(inv *Inventory, names []string) bool {
+	for _, n := range names {
+		if hasEntry(inv, n) {
+			return true
+		}
+	}
+	return false
 }

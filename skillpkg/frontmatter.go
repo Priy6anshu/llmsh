@@ -203,3 +203,19 @@ func yamlEntry(key, val string) (string, error) {
 	}
 	return string(b), nil
 }
+
+// SplitFrontmatter separates a leading YAML frontmatter block from the prose
+// after it.
+//
+// Exported because it is the one piece of SKILL.md parsing that is not about
+// skills: an EVAL.md has the same shape and no reason to carry a second copy of
+// this regex. ok is false when the document does not open with a delimited
+// block at all, which is a different failure from a block that is empty or
+// malformed — the caller says which of those it minds.
+func SplitFrontmatter(src []byte) (front, body []byte, ok bool) {
+	m := frontmatterRe.FindSubmatchIndex(src)
+	if m == nil {
+		return nil, src, false
+	}
+	return src[m[2]:m[3]], src[m[1]:], true
+}

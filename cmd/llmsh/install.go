@@ -30,6 +30,15 @@ func cmdInstall(args []string) error {
 	}
 	owner, name, version := parseRef(ref)
 
+	// Checked before anything is downloaded, because it is an argument rather
+	// than a discovery: a typo in -for is knowable without the network, and
+	// reporting it after fetching an archive makes the user wait to be told
+	// they mistyped a flag.
+	agent, err := lookupTarget(*forAgent)
+	if err != nil {
+		return err
+	}
+
 	cfg, err := loadConfigOnly()
 	if err != nil {
 		return err
@@ -44,10 +53,6 @@ func cmdInstall(args []string) error {
 		return err
 	}
 
-	agent, err := lookupTarget(*forAgent)
-	if err != nil {
-		return err
-	}
 	target, err := installDir(*dest, agent)
 	if err != nil {
 		return err
