@@ -447,7 +447,13 @@ func cmdStatus(args []string) error {
 	}
 	fmt.Printf("%s/%s\n", owner, name)
 	for _, v := range versions {
+		// "not_required" is the server's word for a rule, not a word for a
+		// reader, and it reads oddly in a column whose other values are review
+		// outcomes. The website stopped showing it for the same reason.
 		state := v.ReviewState
+		if state == "not_required" {
+			state = "private"
+		}
 		if v.Yanked {
 			state += ", withdrawn"
 		}
