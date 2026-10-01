@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Priy6anshu/llmsh/internal/client"
+	"github.com/Priy6anshu/llmsh/internal/config"
 	"github.com/Priy6anshu/llmsh/internal/gitinfo"
 	"github.com/Priy6anshu/llmsh/internal/workdir"
 	skill "github.com/Priy6anshu/llmsh/skillpkg"
@@ -96,7 +97,18 @@ func cmdDiff(args []string) error {
 	if man == nil || man.Name == "" {
 		return fmt.Errorf("%s has no name in SKILL.md", dir)
 	}
-	owner := cfg.Handle
+	// Against what was cloned, not against a skill of yours that happens to
+	// share its name. Diffing a collaborator's working copy against your own
+	// unrelated skill of the same name reports every line as changed, which
+	// reads as "you have rewritten this" rather than "this is a different
+	// skill".
+	owner := ""
+	if t, terr := targetFor(dir, man.Name, "", false); terr == nil {
+		owner = t.Owner
+	}
+	if owner == "" {
+		owner = cfg.Handle
+	}
 	if owner == "" {
 		me, err := c.Me()
 		if err != nil {
@@ -210,6 +222,13 @@ func cmdPublish(args []string) error {
 	// sides and says what to pass, which is a better trade than a slower
 	// common case.
 	private := fs.Bool("private", false, "publish into your private space instead of the catalogue")
+	// The opt-out from following the working copy.
+	//
+	// It exists because today's behaviour IS forking: a clone edited and
+	// published went to a skill of your own. Changing where that lands without
+	// a way back would be the same surprise in the other direction, so the
+	// people relying on it keep a one-word way to ask for it.
+	fork := fs.Bool("fork", false, "publish your own copy instead of back to where this was cloned from")
 	positional := parseArgs(fs, args)
 
 	// The argument is a directory, or the full name of a skill in somebody
@@ -238,8 +257,11 @@ func cmdPublish(args []string) error {
 		}
 		intoOwner, intoSlug = owner, slug
 	}
+	if *fork && intoOwner != "" {
+		return fmt.Errorf("--fork publishes your own copy, so it cannot be combined with %s", target)
+	}
 
-	c, _, err := clientFromConfig()
+	c, cfg, err := clientFromConfig()
 	if err != nil {
 		return err
 	}
@@ -263,6 +285,27 @@ func cmdPublish(args []string) error {
 	}
 	if errs, _ := report(res); errs > 0 {
 		return fmt.Errorf("%d error(s) — fix these first", errs)
+	}
+
+	// Where this goes, when nothing on the command line said.
+	//
+	// The working copy knows: it was written at clone time and nothing else in
+	// the directory does. Resolved after the manifest is read, because a
+	// package renamed away from what was cloned is no longer that skill, and
+	// following the origin then would publish under a name its owner never
+	// chose.
+	t, terr := targetFor(dir, man.Name, intoOwner, *fork)
+	if terr != nil {
+		return terr
+	}
+	if intoOwner == "" && t.Owner != "" {
+		intoOwner = t.Owner
+	}
+	if intoOwner == "" && !*fork {
+		if was := renamedFrom(dir, man.Name); was != "" {
+			fmt.Printf("  this was cloned from %s and is now called %s, so it publishes as yours\n",
+				was, man.Name)
+		}
 	}
 
 	// The name on the command line and the name in the package have to agree.
@@ -352,6 +395,16 @@ func cmdPublish(args []string) error {
 	if out.OK && !*dryRun {
 		if origin, rerr := workdir.Read(dir); rerr == nil && origin != nil {
 			origin.Version, origin.Digest = out.Version, out.Digest
+			// A fork is a new lineage, so the working copy now belongs to the
+			// copy rather than to what it was taken from. Left pointing at the
+			// original, the next bare publish would swing back to it -- the
+			// same confusion as before, just postponed until after somebody
+			// had stopped thinking about it.
+			if *fork {
+				if who := publisherHandle(c, cfg); who != "" {
+					origin.Owner = who
+				}
+			}
 			_ = workdir.Write(dir, origin)
 		}
 	}
@@ -367,7 +420,13 @@ func cmdPublish(args []string) error {
 		// anyway would tell somebody their work is queued for review when it is
 		// already live in their space -- the same sentence the publish page had
 		// to stop showing for the same reason.
-		if *private {
+		// Keyed on what came back, not on what was asked.
+		//
+		// A publish that says nothing now inherits the skill's visibility, so
+		// the flag no longer decides where the version went -- and reading the
+		// flag printed "submitted, a person reads every version" over a version
+		// that had just landed privately and would never be read by anyone.
+		if out.ReviewState == "not_required" {
 			fmt.Printf("\n  %s@%s is in %s · digest %s\n",
 				out.Slug, out.Version, space, out.ShortDigest)
 			if intoOwner != "" {
@@ -417,16 +476,36 @@ func reportUpload(out *client.UploadResponse) (errors, warnings int) {
 }
 
 func cmdStatus(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("which skill? e.g. llmsh status flaky-test-hunter")
+	// Inside a working copy the name is optional, because the directory already
+	// knows which skill this is -- and a bare name there resolved to a skill of
+	// your own, so somebody collaborating on three same-named skills got the
+	// status of a fourth without being told.
+	name := ""
+	if len(args) > 0 {
+		name = args[0]
 	}
-	name := args[0]
+	fromCopy := ""
+	if o, oerr := workdir.Read("."); oerr == nil && o != nil {
+		if name == "" {
+			name = o.Slug
+		}
+		if o.Slug == name {
+			fromCopy = o.Owner
+		}
+	}
+	if name == "" {
+		return fmt.Errorf("which skill? e.g. llmsh status flaky-test-hunter\n" +
+			"  Inside a working copy the name can be left out")
+	}
 
 	c, cfg, err := clientFromConfig()
 	if err != nil {
 		return err
 	}
-	owner := cfg.Handle
+	owner := fromCopy
+	if owner == "" {
+		owner = cfg.Handle
+	}
 	if i := strings.Index(name, "/"); i > 0 {
 		owner, name = name[:i], name[i+1:]
 	}
@@ -468,3 +547,16 @@ func cmdStatus(args []string) error {
 // digestOf is the identity these files would publish under, computed from the
 // entries Pack already produced rather than by walking the directory twice.
 func digestOf(files []skill.FileEntry) string { return skill.TreeDigest(files) }
+
+
+// publisherHandle is who the credential in hand belongs to, asked for only when
+// something needs to be written down under their name.
+func publisherHandle(c *client.Client, cfg *config.Config) string {
+	if cfg != nil && cfg.Handle != "" {
+		return cfg.Handle
+	}
+	if me, err := c.Me(); err == nil {
+		return me.Handle
+	}
+	return ""
+}

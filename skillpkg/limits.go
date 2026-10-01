@@ -44,10 +44,18 @@ var KnownDirs = []string{"scripts/", "references/", "assets/", "examples/"}
 
 // Stripped silently during packing, matching the official package_skill.py behaviour
 // so that a package built by our CLI and one built by theirs agree.
-// .aq is the CLI's record of where a working copy came from. Client-side
+// .llmsh is the CLI's record of where a working copy came from. Client-side
 // bookkeeping, so it is stripped for the same reason __pycache__ is: it says
 // something about one machine, not about the skill.
-var StripDirs = []string{"__pycache__", "node_modules", ".aq"}
+//
+// ".aq" is the name it had before the tool was renamed, and it stayed here
+// alone after the rename -- so for as long as that was true, nothing stripped
+// anything: every skill published from a cloned working copy shipped its
+// .llmsh/origin.json, which carries the publisher's API URL and the skill they
+// cloned from, and tripped an unrecognized_layout warning on the way out. Both
+// names are listed because packages published in between still contain the old
+// one and should lose it when they are next unpacked.
+var StripDirs = []string{"__pycache__", "node_modules", ".llmsh", ".aq"}
 var StripFiles = []string{".DS_Store", "Thumbs.db"}
 var StripGlobs = []string{"*.pyc", "*.pyo"}
 

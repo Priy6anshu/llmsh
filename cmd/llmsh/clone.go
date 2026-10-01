@@ -41,7 +41,12 @@ func cmdClone(args []string) error {
 		dest = name
 	}
 	if _, err := os.Stat(dest); err == nil {
-		return fmt.Errorf("%s already exists", dest)
+		// Naming the way out, because this is the first thing somebody hits
+		// when they collaborate on two skills that share a name -- and the
+		// directory is named after the skill, so it is guaranteed to collide.
+		return fmt.Errorf("%s already exists\n"+
+			"  Clone it somewhere else: llmsh clone %s/%s --dir %s-%s",
+			dest, owner, name, owner, name)
 	}
 
 	pkg, resolved, err := fetchInto(c, owner, name, version, dest)
