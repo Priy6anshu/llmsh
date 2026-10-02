@@ -59,6 +59,10 @@ type SearchMeta struct {
 
 type Skill struct {
 	Owner, Slug, Description string
+	// Kind is "skill" or "eval", as the catalogue recorded it. An agent needs
+	// it before it acts: a skill is instructions it may load, an eval is test
+	// cases it must not. Empty from a catalogue too old to say, read as skill.
+	Kind string
 	Categories, Keywords     []string
 	License, Repository      string
 	Downloads                int

@@ -28,7 +28,8 @@ Usage:
   llmsh publish [dir]            package the folder and submit it for review
   llmsh push [dir]               the same thing, if that is the word you reach for
   llmsh status <skill>           versions, review state and what a reviewer asked for
-  llmsh install <owner>/<skill>  download, verify and unpack where an agent will load it
+  llmsh install <owner>/<name>   download and verify; a skill goes where an agent loads it,
+                                 an eval into ./evals
 
   llmsh login / logout / whoami  the stored access token
   llmsh mcp                      serve the catalogue to an AI over MCP
@@ -44,7 +45,7 @@ Usage:
 const evalUsage = `
 Evals (LLMSH_EVALS=1):
   llmsh publish [dir]            a folder with a manifest.yaml publishes as an eval
-  llmsh eval get <owner>/<name>  download an eval's dataset and rubrics
+  llmsh eval get <owner>/<name>  the same as install, for an eval (kept for scripts that use it)
   llmsh eval get --dir ./evals   where to unpack (default ./evals)
 `
 

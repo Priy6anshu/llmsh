@@ -156,7 +156,7 @@ func (h *httpCatalogue) WebURL(owner, slug string) string {
 
 func toMCP(s client.SkillSummary) mcp.Skill {
 	out := mcp.Skill{
-		Owner: s.Owner, Slug: s.Slug, Description: s.Description,
+		Owner: s.Owner, Slug: s.Slug, Description: s.Description, Kind: s.Kind,
 		Categories: s.Categories, Keywords: s.Keywords,
 		License: s.License, Repository: s.Repository, Downloads: s.Downloads,
 	}

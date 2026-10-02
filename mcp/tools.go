@@ -219,7 +219,14 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 			fmt.Fprintf(&b, "%d skill(s) for %q:\n\n", len(skills), a.Query)
 		}
 		for _, sk := range skills {
-			fmt.Fprintf(&b, "%s/%s\n  %s\n", sk.Owner, sk.Slug, summarise(sk.Description))
+			// Marked, because the catalogue holds two kinds and only one of them
+			// is instructions. An agent that picked an eval from this list and
+			// treated it as a skill would be loading test cases as guidance.
+			label := ""
+			if sk.Kind == "eval" {
+				label = "  [eval]"
+			}
+			fmt.Fprintf(&b, "%s/%s%s\n  %s\n", sk.Owner, sk.Slug, label, summarise(sk.Description))
 			var bits []string
 			if sk.Latest != nil {
 				bits = append(bits, "v"+sk.Latest.Version,
@@ -249,6 +256,7 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 
 		var b strings.Builder
 		fmt.Fprintf(&b, "%s/%s\n\n%s\n\n", sk.Owner, sk.Slug, sk.Description)
+		fmt.Fprintf(&b, "Kind:       %s\n", kindName(sk.Kind))
 		if len(sk.Categories) > 0 {
 			fmt.Fprintf(&b, "Categories: %s\n", strings.Join(sk.Categories, ", "))
 		}
@@ -272,6 +280,7 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 		if u := s.Catalogue.WebURL(sk.Owner, sk.Slug); u != "" {
 			fmt.Fprintf(&b, "\nPage: %s\n", u)
 		}
+		fmt.Fprintf(&b, "\n%s\n", whereItGoes(sk.Kind))
 		return b.String(), nil
 
 	case "read_skill_file":
@@ -335,29 +344,57 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (st
 		if a.Slug == "" {
 			return "", fmt.Errorf("name is required, as \"owner/slug\" or just \"slug\"")
 		}
-		owner := a.Owner
-		if owner == "" {
-			// Resolved rather than left out. The command goes in front of a
-			// person, who is deciding whether to run it: "anthropics/x" says
-			// who wrote what they would be installing and "x" does not.
-			sk, err := s.Catalogue.Skill(ctx, "", a.Slug)
-			if err != nil {
-				return "", err
-			}
-			owner = sk.Owner
+		// Always resolved now, not only when the owner is missing. The owner
+		// still matters -- "anthropics/x" tells a person who wrote what they
+		// are about to install, and "x" does not -- but so does the kind, and
+		// the kind is what decides where it unpacks.
+		sk, err := s.Catalogue.Skill(ctx, a.Owner, a.Slug)
+		if err != nil {
+			return "", err
 		}
+		owner := sk.Owner
 		ref := owner + "/" + a.Slug
 		if a.Version != "" {
 			ref += "@" + a.Version
 		}
+		// One command for both kinds. llmsh asks the registry what it is
+		// downloading and sends it to the right place, so the instruction an
+		// agent passes on can never be the wrong command -- which it was for
+		// an eval, until install learned to route them.
 		return fmt.Sprintf(
-			"To install %s, the user runs:\n\n  %s %s\n\n"+
-				"This unpacks into .claude/skills/ in the project, or ~/.claude/skills/ "+
-				"otherwise, and verifies the package digest before writing anything.\n\n"+
-				"Show them this command rather than running it: installing puts a third "+
-				"party's instructions somewhere an agent will load them, which is their "+
-				"decision to make.",
-			ref, s.InstallCommand, ref), nil
+			"To install %s, the user runs:\n\n  %s %s\n\n%s\n\n"+
+				"Show them this command rather than running it: it writes a third "+
+				"party's files to their machine, which is their decision to make.",
+			ref, s.InstallCommand, ref, whereItGoes(sk.Kind)), nil
 	}
 	return "", fmt.Errorf("no such tool: %s", name)
+}
+
+
+func kindName(kind string) string {
+	if kind == "eval" {
+		return "eval — test cases and expected answers, not instructions"
+	}
+	return "skill — instructions an agent loads"
+}
+
+/*
+whereItGoes says where llmsh unpacks a package of this kind, for the agent to
+pass on.
+
+Said at the moment it matters, rather than left for the agent to work out. A
+skill belongs where an agent loads guidance; an eval must never go there, since
+an agent reading a dataset of questions and expected answers as instructions is
+the one outcome the separation exists to prevent. llmsh decides this itself from
+what the registry says it downloaded, so the instruction is the same command for
+both -- this only tells the reader what that command will do.
+*/
+func whereItGoes(kind string) string {
+	if kind == "eval" {
+		return "This is an eval, so llmsh unpacks it into ./evals/ — never into a " +
+			"skills directory, where an agent would read its test cases as instructions. " +
+			"It is for running and grading, not for loading."
+	}
+	return "This is a skill, so llmsh unpacks it into .claude/skills/ in the project, " +
+		"or ~/.claude/skills/ otherwise, and verifies the package digest before writing anything."
 }

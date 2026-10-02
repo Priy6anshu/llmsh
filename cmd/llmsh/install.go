@@ -48,9 +48,37 @@ func cmdInstall(args []string) error {
 	}
 	c := newClient(cfg)
 
-	archive, want, err := c.Download(owner, name, version)
+	archive, want, kind, err := c.DownloadPackage(owner, name, version)
 	if err != nil {
 		return err
+	}
+
+	/*
+	 * One command for both kinds, routed on what the server says it sent.
+	 *
+	 * An eval is test cases and expected answers, and an agent's skills
+	 * directory is where it loads instructions. Unpacked there, a dataset would
+	 * be read as guidance -- so evals go to ./evals instead, and --for is not
+	 * consulted, because no agent is meant to load one.
+	 *
+	 * The kind comes from the X-Skill-Kind header the API sends with the digest,
+	 * not from inspecting the bytes: what a package claims to be is the thing
+	 * being decided, so the package cannot be the one to say. installEval then
+	 * validates it as an eval, so a package that disagrees with its header is
+	 * refused rather than written anywhere.
+	 *
+	 * This used to tell people to run a different command. install refused an
+	 * eval outright -- "no SKILL.md at the package root", which reads as a broken
+	 * package rather than a wrong command -- and the agent-facing instructions
+	 * named install for every package, so the instruction and the tool
+	 * disagreed. Now there is nothing to get wrong.
+	 */
+	if kind == "eval" {
+		where := *dest
+		if where == "" {
+			where = "evals"
+		}
+		return installEval(owner, name, archive, want, where, *force)
 	}
 
 	target, err := installDir(*dest, agent)

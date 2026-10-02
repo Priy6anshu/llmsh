@@ -287,13 +287,29 @@ func (c *Client) Files(owner, slug, version string) ([]FileEntry, error) {
 	return out.Files, err
 }
 
-// Download fetches a version's archive.
+// Download fetches a version's archive and the digest it must hash to.
+//
+// Kept for the callers that only ever handle skills -- clone works on a
+// SKILL.md-shaped working copy -- so they are not made to accept a kind they
+// would have to ignore.
+func (c *Client) Download(owner, slug, version string) (archive []byte, digest string, err error) {
+	archive, digest, _, err = c.downloadPackage(owner, slug, version)
+	return archive, digest, err
+}
+
+// DownloadPackage is Download plus what the server says the package is:
+// "skill" or "eval", or empty from a server too old to say.
+func (c *Client) DownloadPackage(owner, slug, version string) (archive []byte, digest, kind string, err error) {
+	return c.downloadPackage(owner, slug, version)
+}
+
+// downloadPackage does the fetching for both.
 //
 // The API answers with a redirect to a short-lived URL on the object store, so
 // the bytes never pass through it. The digest comes back in a header on the
 // redirect itself, which is the response the API signed off on -- reading it
 // from the final hop would mean trusting whatever served the bytes.
-func (c *Client) Download(owner, slug, version string) (archive []byte, digest string, err error) {
+func (c *Client) downloadPackage(owner, slug, version string) (archive []byte, digest, kind string, err error) {
 	q := url.Values{}
 	if version != "" {
 		q.Set("version", version)
@@ -303,7 +319,7 @@ func (c *Client) Download(owner, slug, version string) (archive []byte, digest s
 
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -320,50 +336,58 @@ func (c *Client) Download(owner, slug, version string) (archive []byte, digest s
 	}
 	resp, err := noFollow.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("could not reach %s: %w", req.URL.Host, err)
+		return nil, "", "", fmt.Errorf("could not reach %s: %w", req.URL.Host, err)
 	}
 	defer resp.Body.Close()
 
 	switch {
 	case resp.StatusCode == 404:
-		return nil, "", fmt.Errorf("no such skill or version, or it is not public yet")
+		return nil, "", "", fmt.Errorf("no such skill or version, or it is not public yet")
 	case resp.StatusCode >= 400:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		var p Problem
 		if json.Unmarshal(body, &p) == nil && p.Detail != "" {
-			return nil, "", &p
+			return nil, "", "", &p
 		}
-		return nil, "", fmt.Errorf("%s", resp.Status)
+		return nil, "", "", fmt.Errorf("%s", resp.Status)
 	}
 
 	digest = resp.Header.Get("X-Skill-Digest")
+	// What it is, from the same response as the digest and for the same
+	// reason: this is the answer the API signed off on, not one inferred from
+	// the bytes it is about. Empty from a server that predates the header,
+	// which every caller treats as a skill -- the only kind there was.
+	kind = resp.Header.Get("X-Skill-Kind")
 	loc := resp.Header.Get("Location")
 	if loc == "" {
 		// A deployment serving bytes directly rather than redirecting.
 		b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
-		return b, digest, err
+		return b, digest, kind, err
 	}
 
 	get, err := http.NewRequest("GET", loc, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	blob, err := c.HTTP.Do(get)
 	if err != nil {
-		return nil, "", fmt.Errorf("could not fetch the archive: %w", err)
+		return nil, "", "", fmt.Errorf("could not fetch the archive: %w", err)
 	}
 	defer blob.Body.Close()
 	if blob.StatusCode != 200 {
-		return nil, "", fmt.Errorf("the download link returned %s", blob.Status)
+		return nil, "", "", fmt.Errorf("the download link returned %s", blob.Status)
 	}
 	b, err := io.ReadAll(io.LimitReader(blob.Body, 64<<20))
-	return b, digest, err
+	return b, digest, kind, err
 }
 
 // SkillSummary is a catalogue entry as the list and detail endpoints return it.
 type SkillSummary struct {
 	Owner       string   `json:"owner"`
 	Slug        string   `json:"slug"`
+	// Kind is "skill" or "eval". Sent on every listing row by the API; carried
+	// here so the agent-facing tools can say which one a result is.
+	Kind string `json:"kind"`
 	FullName    string   `json:"full_name"`
 	Description string   `json:"description"`
 	Categories  []string `json:"categories"`

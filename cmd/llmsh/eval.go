@@ -201,7 +201,24 @@ func cmdEvalGet(args []string) error {
 	if err != nil {
 		return err
 	}
+	return installEval(owner, name, archive, want, *dest, *force)
+}
 
+/*
+installEval unpacks an eval where evals belong, after checking it is one and is
+the one the registry described.
+
+Shared by `llmsh eval get` and by `llmsh install`, which now sends an eval here
+when the server says that is what it downloaded. One function, so the two cannot
+drift on where an eval lands or on what it must pass first.
+
+It verifies the digest, which eval get did not. It printed the digest the
+registry declared and then unpacked whatever had arrived, so a download altered
+anywhere between the object store and the disk would have been written out and
+reported with a digest it did not have. install has always refused that, and an
+eval is data a grader trusts, so it gets the same check.
+*/
+func installEval(owner, name string, archive []byte, want, dest string, force bool) error {
 	// Read before it is written anywhere, so a package that is not an eval is
 	// refused rather than unpacked into a directory named evals.
 	pkg, res, err := evalpkg.Unpack(context.Background(),
@@ -212,15 +229,20 @@ func cmdEvalGet(args []string) error {
 	if errs, _ := report(res); errs > 0 {
 		return fmt.Errorf("%s/%s is not a valid eval package", owner, name)
 	}
+	if want != "" && pkg.Digest != want {
+		return fmt.Errorf("digest mismatch: the registry says %s, these bytes are %s\n"+
+			"  Nothing was written. Try again; if it repeats, the package is not what was published",
+			skill.ShortDigest(want), skill.ShortDigest(pkg.Digest))
+	}
 
-	into := filepath.Join(*dest, name)
-	if _, err := os.Stat(into); err == nil && !*force {
+	into := filepath.Join(dest, name)
+	if _, err := os.Stat(into); err == nil && !force {
 		return fmt.Errorf("%s already exists\n  Pass --force to replace it", into)
 	}
-	if err := os.MkdirAll(*dest, 0o755); err != nil {
+	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
-	if *force {
+	if force {
 		if err := os.RemoveAll(into); err != nil {
 			return err
 		}
@@ -235,9 +257,7 @@ func cmdEvalGet(args []string) error {
 
 	fmt.Printf("%s/%s@%s → %s\n", owner, name, pkg.Eval.Version, into)
 	describeEval(pkg)
-	if want != "" {
-		fmt.Printf("  digest %s\n", skill.ShortDigest(want))
-	}
+	fmt.Printf("  %d files · digest %s verified\n", len(pkg.Files), skill.ShortDigest(pkg.Digest))
 	return nil
 }
 
