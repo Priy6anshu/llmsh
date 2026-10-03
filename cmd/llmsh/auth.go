@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -41,9 +42,14 @@ func cmdLogin(args []string) error {
 	} else {
 		fmt.Printf("Create a token at %s/account (Access tokens).\n", webOrigin(cfg))
 		fmt.Printf("It needs at least the skills:publish scope to publish.\n\n")
-		fmt.Print("Paste it here: ")
-		b, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		token = strings.TrimSpace(b)
+		t, err := readSecret("Paste it here: ")
+		if err != nil {
+			if errors.Is(err, errCancelled) {
+				return fmt.Errorf("cancelled")
+			}
+			return fmt.Errorf("no token given")
+		}
+		token = strings.TrimSpace(t)
 	}
 	if token == "" {
 		return fmt.Errorf("no token given")
@@ -63,6 +69,8 @@ func cmdLogin(args []string) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
+	// Whatever was cached belonged to the previous token.
+	client.ForgetAccess(config.AccessCachePath())
 	p, _ := config.Path()
 	fmt.Printf("Signed in as %s. Token saved to %s\n", me.Handle, p)
 	return nil
@@ -112,7 +120,7 @@ func clientFromConfig() (*client.Client, *config.Config, error) {
 	if cfg.Token == "" {
 		return nil, nil, fmt.Errorf("not signed in\n  Run: llmsh login")
 	}
-	return client.New(cfg.API, cfg.Ingest, cfg.Token), cfg, nil
+	return newClient(cfg), cfg, nil
 }
 
 // webOrigin guesses where the browser UI lives, for the "create a token" hint.
@@ -135,5 +143,11 @@ func webOrigin(cfg *config.Config) string {
 func loadConfigOnly() (*config.Config, error) { return config.Load() }
 
 func newClient(cfg *config.Config) *client.Client {
-	return client.New(cfg.API, cfg.Ingest, cfg.Token)
+	c := client.New(cfg.API, cfg.Ingest, cfg.Token)
+	// Only for the stored token. A token from LLMSH_TOKEN is a CI job's, and
+	// a CI job's credentials should not be written to disk -- see config.Load.
+	if os.Getenv("LLMSH_TOKEN") == "" && os.Getenv("ALPHAQ_TOKEN") == "" {
+		c.CachePath = config.AccessCachePath()
+	}
+	return c
 }

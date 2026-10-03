@@ -32,7 +32,7 @@ func cmdMCP(args []string) error {
 	if err != nil {
 		return err
 	}
-	c := client.New(cfg.API, cfg.Ingest, cfg.Token)
+	c := newClient(cfg)
 	srv := &mcp.Server{
 		Catalogue:      &httpCatalogue{c: c, web: webOrigin(cfg)},
 		Name:           "llmskillhub",

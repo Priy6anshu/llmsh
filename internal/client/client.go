@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,14 @@ type Client struct {
 	Ingest string
 	Token  string
 	HTTP   *http.Client
+	// CachePath is where an exchanged access token is kept between commands.
+	// Empty keeps it in memory only. See access.go.
+	CachePath string
+
+	mu        sync.Mutex
+	access    string
+	accessExp time.Time
+	direct    bool // the API has no exchange; send the personal token itself
 }
 
 func New(api, ingest, token string) *Client {
@@ -47,12 +56,9 @@ func (p *Problem) Error() string {
 }
 
 func (c *Client) do(req *http.Request, out any) error {
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.send(c.HTTP, req)
 	if err != nil {
 		// A transport failure names the address, because "connection refused"
 		// without one sends people to check the wrong service.
@@ -321,9 +327,6 @@ func (c *Client) downloadPackage(owner, slug, version string) (archive []byte, d
 	if err != nil {
 		return nil, "", "", err
 	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
 
 	// Stop at the redirect so the headers the API set are readable, and so the
 	// Authorization header is not replayed to the object store, which neither
@@ -334,7 +337,7 @@ func (c *Client) downloadPackage(owner, slug, version string) (archive []byte, d
 			return http.ErrUseLastResponse
 		},
 	}
-	resp, err := noFollow.Do(req)
+	resp, err := c.send(noFollow, req)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("could not reach %s: %w", req.URL.Host, err)
 	}

@@ -55,6 +55,17 @@ func Path() (string, error) {
 	return filepath.Join(dir, "llmsh", "config.json"), nil
 }
 
+// AccessCachePath is where the short-lived access token llmsh exchanges its
+// personal token for is kept between commands. Beside the config, for the same
+// reason, and disposable: deleting it costs one exchange.
+func AccessCachePath() string {
+	p, err := Path()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(p), "access.json")
+}
+
 // Load reads the config, applying environment overrides.
 //
 // The environment wins over the file so a CI job can point at a different
@@ -157,5 +168,10 @@ func Clear() error {
 		return err
 	}
 	c.Token, c.Handle = "", ""
+	// The access token exchanged from the old credential goes with it: it would
+	// otherwise keep working for its few remaining minutes after a logout.
+	if p := AccessCachePath(); p != "" {
+		_ = os.Remove(p)
+	}
 	return c.Save()
 }
